@@ -222,10 +222,10 @@ class ClaudeHandler:
             return self._search_files(tool_input["pattern"], tool_input.get("directory", "."))
         elif tool_name == "add_lead":
             return self._add_lead(
-                företag=tool_input["företag"],
+                företag=tool_input["foretag"],
                 kontaktperson=tool_input.get("kontaktperson"),
                 status=tool_input.get("status", "ny"),
-                tjänst=tool_input.get("tjänst"),
+                tjänst=tool_input.get("tjanst"),
                 anteckningar=tool_input.get("anteckningar"),
                 skapad_av=tool_input.get("skapad_av", "Gideon")
             )
@@ -234,7 +234,7 @@ class ClaudeHandler:
         elif tool_name == "add_kpi":
             return self._add_kpi(
                 namn=tool_input["namn"],
-                värde=tool_input["värde"],
+                värde=tool_input["varde"],
                 enhet=tool_input.get("enhet"),
                 anteckning=tool_input.get("anteckning"),
                 skapad_av=tool_input.get("skapad_av", "Gideon")
@@ -247,7 +247,7 @@ class ClaudeHandler:
         elif tool_name == "add_reflektion":
             return self._add_reflektion(
                 text=tool_input["text"],
-                användare=tool_input.get("användare", "Gideon"),
+                användare=tool_input.get("anvandare", "Gideon"),
                 typ=tool_input.get("typ", "daglig")
             )
         elif tool_name == "reset_chat":
@@ -346,7 +346,7 @@ class ClaudeHandler:
                     "input_schema": {
                         "type": "object",
                         "properties": {
-                            "företag": {
+                            "foretag": {
                                 "type": "string",
                                 "description": "Företagets namn"
                             },
@@ -358,7 +358,7 @@ class ClaudeHandler:
                                 "type": "string",
                                 "description": "Status: 'ny', 'kontaktad', 'intresserad', 'förhandling', 'kund', 'ej_intresserad' (default: ny)"
                             },
-                            "tjänst": {
+                            "tjanst": {
                                 "type": "string",
                                 "description": "Tjänst de är intresserade av: 'chatbot', 'voice_agent', 'crm', 'hemsida', etc."
                             },
@@ -371,7 +371,7 @@ class ClaudeHandler:
                                 "description": "Vem som skapade leadet (default: Gideon)"
                             }
                         },
-                        "required": ["företag"]
+                        "required": ["foretag"]
                     }
                 },
                 {
@@ -389,15 +389,15 @@ class ClaudeHandler:
                 },
                 {
                     "name": "add_kpi",
-                    "description": "Logga en KPI (nyckeltal) som hemsidor_sålda, möten_bokade, intäkter, etc.",
+                    "description": "Logga en KPI (nyckeltal) som hemsidor_salda, moten_bokade, intakter, etc.",
                     "input_schema": {
                         "type": "object",
                         "properties": {
                             "namn": {
                                 "type": "string",
-                                "description": "KPI-namn (t.ex. 'hemsidor_sålda', 'möten_bokade')"
+                                "description": "KPI-namn (t.ex. 'hemsidor_salda', 'moten_bokade')"
                             },
-                            "värde": {
+                            "varde": {
                                 "type": "number",
                                 "description": "Värde/antal"
                             },
@@ -414,7 +414,7 @@ class ClaudeHandler:
                                 "description": "Vem som loggade (default: Gideon)"
                             }
                         },
-                        "required": ["namn", "värde"]
+                        "required": ["namn", "varde"]
                     }
                 },
                 {
@@ -444,7 +444,7 @@ class ClaudeHandler:
                                 "type": "string",
                                 "description": "Reflektionens innehåll"
                             },
-                            "användare": {
+                            "anvandare": {
                                 "type": "string",
                                 "description": "Vem reflektionen gäller (default: Gideon)"
                             },
