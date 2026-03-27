@@ -116,13 +116,15 @@ class CalendarHandler:
     def get_events(
         self,
         days_ahead: int = 7,
+        days_back: int = 0,
         max_results: int = 10
     ) -> str:
         """
-        Hämta kommande events
+        Hämta events från kalendern (framåt och/eller bakåt i tiden)
 
         Args:
-            days_ahead: Antal dagar framåt att visa
+            days_ahead: Antal dagar framåt att visa (default: 7)
+            days_back: Antal dagar bakåt att visa (default: 0)
             max_results: Max antal events att returnera
 
         Returns:
@@ -133,7 +135,7 @@ class CalendarHandler:
 
         try:
             now = datetime.utcnow()
-            time_min = now.isoformat() + 'Z'
+            time_min = (now - timedelta(days=days_back)).isoformat() + 'Z'
             time_max = (now + timedelta(days=days_ahead)).isoformat() + 'Z'
 
             events_result = self.service.events().list(
@@ -148,9 +150,22 @@ class CalendarHandler:
             events = events_result.get('items', [])
 
             if not events:
-                return f"📅 Inga events kommande {days_ahead} dagar."
+                if days_back > 0 and days_ahead > 0:
+                    return f"📅 Inga events hittades ({days_back} dagar bakåt till {days_ahead} dagar framåt)."
+                elif days_back > 0:
+                    return f"📅 Inga events senaste {days_back} dagarna."
+                else:
+                    return f"📅 Inga events kommande {days_ahead} dagar."
 
-            result = [f"📅 **Kommande events ({days_ahead} dagar):**\n"]
+            # Skapa header baserat på tidsperiod
+            if days_back > 0 and days_ahead > 0:
+                header = f"📅 **Events ({days_back} dagar bakåt till {days_ahead} dagar framåt):**\n"
+            elif days_back > 0:
+                header = f"📅 **Events senaste {days_back} dagarna:**\n"
+            else:
+                header = f"📅 **Kommande events ({days_ahead} dagar):**\n"
+
+            result = [header]
             for event in events:
                 start = event['start'].get('dateTime', event['start'].get('date'))
                 summary = event.get('summary', 'Ingen titel')

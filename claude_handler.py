@@ -270,6 +270,7 @@ class ClaudeHandler:
                 return "❌ Google Calendar inte konfigurerat!"
             return self.calendar.get_events(
                 days_ahead=tool_input.get("days_ahead", 7),
+                days_back=tool_input.get("days_back", 0),
                 max_results=tool_input.get("max_results", 10)
             )
         else:
@@ -526,13 +527,17 @@ class ClaudeHandler:
                 },
                 {
                     "name": "get_calendar_events",
-                    "description": "Hämta kommande events från Google Calendar. Använd när användaren frågar 'vad har jag för möten?', 'visa min kalender', etc.",
+                    "description": "Hämta events från Google Calendar (både framåt och bakåt i tiden). Använd när användaren frågar 'vad har jag för möten?', 'visa min kalender', 'vad hade jag för möten förra veckan?', etc.",
                     "input_schema": {
                         "type": "object",
                         "properties": {
                             "days_ahead": {
                                 "type": "integer",
                                 "description": "Antal dagar framåt att visa (default: 7)"
+                            },
+                            "days_back": {
+                                "type": "integer",
+                                "description": "Antal dagar bakåt att visa (default: 0). Använd för att se historiska events."
                             },
                             "max_results": {
                                 "type": "integer",
@@ -576,7 +581,7 @@ Var proaktiv och naturlig - du förstår från kontexten!""" if self.db else ""
         calendar_tools_info = """
 **KALENDER-VERKTYG:**
 - add_calendar_event: Lägg till möten, deadlines, påminnelser i Google Calendar
-- get_calendar_events: Visa kommande events
+- get_calendar_events: Visa både kommande OCH historiska events (framåt och bakåt i tiden)
 
 **SMART TIDSHANTERING:**
 Du förstår naturligt språk för datum och tid:
@@ -630,7 +635,13 @@ User: "Påminn mig att ringa Stefan nästa vecka"
 → "Jag lägger in en påminnelse på måndag 09:00. Vill du att jag lägger till något mer i beskrivningen?"
 
 User: "Vad har jag för möten?"
-→ get_calendar_events → Visa med kontext: "Denna vecka har du 3 möten: ..."
+→ get_calendar_events(days_ahead=7) → "Denna vecka har du 3 möten: ..."
+
+User: "Vad hade jag för möten förra veckan?"
+→ get_calendar_events(days_back=7, days_ahead=0) → "Förra veckan hade du 4 möten: ..."
+
+User: "Visa allt från senaste veckan fram till nästa vecka"
+→ get_calendar_events(days_back=7, days_ahead=7) → "Visar 14 dagars events..."
 
 **VIKTIGT:**
 - Bekräfta ALLTID tid och datum innan bokning
