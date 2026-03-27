@@ -4,16 +4,18 @@ from pathlib import Path
 from typing import List, Dict, Any
 import anthropic
 from anthropic.types import TextBlock, ToolUseBlock
+from calendar_handler import CalendarHandler
 
 class ClaudeHandler:
     """Hanterar Claude API-anrop med file access tools"""
 
-    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-5-20250929", db=None):
+    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-5-20250929", db=None, calendar=None):
         self.client = anthropic.Anthropic(api_key=api_key)
         self.workspace_path = Path(workspace_path).resolve()
         self.model = model
         self.conversation_history = []
         self.db = db  # Supabase handler för att spara leads, KPIs, etc.
+        self.calendar = calendar  # Calendar handler för Google Calendar
 
     def _get_safe_path(self, filepath: str) -> Path:
         """Säkerställ att sökvägen är inom workspace"""
@@ -252,6 +254,24 @@ class ClaudeHandler:
             )
         elif tool_name == "reset_chat":
             return self._reset_chat()
+        elif tool_name == "add_calendar_event":
+            if not self.calendar:
+                return "❌ Google Calendar inte konfigurerat!"
+            return self.calendar.add_event(
+                summary=tool_input["summary"],
+                start_time=tool_input["start_time"],
+                end_time=tool_input.get("end_time"),
+                description=tool_input.get("description"),
+                location=tool_input.get("location"),
+                attendees=tool_input.get("attendees")
+            )
+        elif tool_name == "get_calendar_events":
+            if not self.calendar:
+                return "❌ Google Calendar inte konfigurerat!"
+            return self.calendar.get_events(
+                days_ahead=tool_input.get("days_ahead", 7),
+                max_results=tool_input.get("max_results", 10)
+            )
         else:
             return f"❌ Okänt tool: {tool_name}"
 
@@ -466,6 +486,63 @@ class ClaudeHandler:
                 }
             ])
 
+        # Lägg till Calendar-verktyg om konfigurerat
+        if self.calendar:
+            tools.extend([
+                {
+                    "name": "add_calendar_event",
+                    "description": "Lägg till event i Google Calendar. Använd när användaren nämner möten, deadlines, påminnelser. Exempel: 'Boka möte med X', 'Påminn mig om Y'",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": "Event-titel (t.ex. 'Möte med kund')"
+                            },
+                            "start_time": {
+                                "type": "string",
+                                "description": "Start-tid i format YYYY-MM-DD HH:MM (t.ex. '2024-03-27 14:00')"
+                            },
+                            "end_time": {
+                                "type": "string",
+                                "description": "Slut-tid i format YYYY-MM-DD HH:MM (optional, default +1h)"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Beskrivning av eventet (optional)"
+                            },
+                            "location": {
+                                "type": "string",
+                                "description": "Plats/adress (optional)"
+                            },
+                            "attendees": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Lista med email-adresser till deltagare (optional)"
+                            }
+                        },
+                        "required": ["summary", "start_time"]
+                    }
+                },
+                {
+                    "name": "get_calendar_events",
+                    "description": "Hämta kommande events från Google Calendar. Använd när användaren frågar 'vad har jag för möten?', 'visa min kalender', etc.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "days_ahead": {
+                                "type": "integer",
+                                "description": "Antal dagar framåt att visa (default: 7)"
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Max antal events att visa (default: 10)"
+                            }
+                        }
+                    }
+                }
+            ])
+
         return tools
 
     async def ask(self, user_message: str, user_name: str = "User") -> str:
@@ -481,7 +558,7 @@ class ClaudeHandler:
 **TILLGÄNGLIGA VERKTYG:**
 - add_lead: Lägg till leads (potentiella kunder)
 - get_leads: Hämta och visa leads
-- add_kpi: Logga KPIs (nyckeltal som 'hemsidor_sålda', 'möten_bokade', etc.)
+- add_kpi: Logga KPIs (nyckeltal som 'hemsidor_salda', 'moten_bokade', etc.)
 - get_kpis: Visa statistik och framsteg
 - add_reflektion: Spara reflektioner och anteckningar
 - reset_chat: Rensa chatten när användaren säger "rensa chatten", "börja om", "ny konversation"
@@ -495,6 +572,19 @@ class ClaudeHandler:
 - "Rensa chatten" → använd reset_chat
 
 Var proaktiv och naturlig - du förstår från kontexten!""" if self.db else ""
+
+        calendar_tools_info = """
+**KALENDER-VERKTYG:**
+- add_calendar_event: Lägg till möten, deadlines, påminnelser i Google Calendar
+- get_calendar_events: Visa kommande events
+
+**NÄR DU SKA ANVÄNDA KALENDERN:**
+- "Boka möte med X" → add_calendar_event
+- "Påminn mig om Y" → add_calendar_event
+- "Vad har jag för möten?" → get_calendar_events
+- När användaren nämner deadlines → föreslå att lägga till i kalendern
+
+Var proaktiv - fråga om tid/datum om det saknas!""" if self.calendar else ""
 
         system_prompt = f"""Du är Gideon, en affärsdriven AI-assistent för Axona Digital AB.
 
@@ -555,6 +645,7 @@ Workspace: {self.workspace_path}
 
 Du har tillgång till verktyg för att läsa, skriva och söka i filer. Använd dem när det behövs!
 {db_tools_info}
+{calendar_tools_info}
 
 Kommunicera på svenska."""
 

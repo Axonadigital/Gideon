@@ -1,5 +1,10 @@
 # Environment variables
 .env
+.env.*
+calendar_secrets.txt
+token.pickle
+client_secret_*.json
+*.json:Zone.Identifier
 
 # Python
 __pycache__/

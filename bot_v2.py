@@ -4,6 +4,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from claude_handler import ClaudeHandler
 from supabase_handler import SupabaseHandler
+from calendar_handler import CalendarHandler
 from datetime import date
 
 # Ladda environment variables
@@ -15,6 +16,9 @@ WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", os.path.expanduser("~"))
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+GOOGLE_CALENDAR_REFRESH_TOKEN = os.getenv("GOOGLE_CALENDAR_REFRESH_TOKEN")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
 # Skapa bot med intents
 intents = discord.Intents.default()
@@ -29,6 +33,15 @@ db = None
 if SUPABASE_URL and SUPABASE_KEY:
     db = SupabaseHandler(SUPABASE_URL, SUPABASE_KEY)
 
+# Calendar handler (delad för alla)
+calendar = None
+if GOOGLE_CALENDAR_REFRESH_TOKEN and GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    calendar = CalendarHandler(
+        refresh_token=GOOGLE_CALENDAR_REFRESH_TOKEN,
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET
+    )
+
 def get_claude_session(user_id: str) -> ClaudeHandler:
     """Hämta eller skapa Claude-session för användare"""
     if user_id not in claude_sessions:
@@ -36,7 +49,8 @@ def get_claude_session(user_id: str) -> ClaudeHandler:
             api_key=ANTHROPIC_API_KEY,
             workspace_path=WORKSPACE_PATH,
             model=CLAUDE_MODEL,
-            db=db  # Skicka in Supabase så Claude kan använda den
+            db=db,  # Skicka in Supabase så Claude kan använda den
+            calendar=calendar  # Skicka in Calendar så Claude kan använda den
         )
     return claude_sessions[user_id]
 
@@ -47,6 +61,7 @@ async def on_ready():
     print(f"📁 Workspace: {WORKSPACE_PATH}")
     print(f"🤖 Claude Model: {CLAUDE_MODEL}")
     print(f"💾 Supabase: {'✅ Connected' if db else '❌ Not configured'}")
+    print(f"📅 Google Calendar: {'✅ Connected' if calendar else '❌ Not configured'}")
     print("\nTillgängliga kommandon:")
     print("  !ask <prompt>       - Fråga Claude något")
     print("  !read <filepath>    - Läs en fil")
