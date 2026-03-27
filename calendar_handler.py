@@ -98,7 +98,12 @@ class CalendarHandler:
                 event['attendees'] = [{'email': email} for email in attendees]
 
             # Lägg till i kalendern
-            result = self.service.events().insert(calendarId='primary', body=event).execute()
+            # sendUpdates='all' krävs för att Google ska skicka ut email-inbjudningar till deltagare
+            result = self.service.events().insert(
+                calendarId='primary',
+                body=event,
+                sendUpdates='all'  # Skicka email-notifikationer till alla deltagare
+            ).execute()
 
             event_link = result.get('htmlLink', '')
             return f"✅ Event tillagt: {summary}\n📅 {start_dt.strftime('%Y-%m-%d %H:%M')} - {end_dt.strftime('%H:%M')}\n🔗 {event_link}"
