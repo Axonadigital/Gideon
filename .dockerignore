@@ -1,0 +1,14 @@
+# Exkludera från Docker build
+.env
+.env.*
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+README.md
+database/
+.vscode/
+.idea/
+*.md
+!requirements.txt

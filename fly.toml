@@ -1,0 +1,22 @@
+# fly.toml app configuration file generated for gideon-axona on 2026-03-27T10:47:01+01:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'gideon-axona'
+primary_region = 'ams'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  CLAUDE_MODEL = 'claude-sonnet-4-5-20250929'
+  WORKSPACE_PATH = '/workspace'
+
+[processes]
+  app = 'python bot.py'
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256
