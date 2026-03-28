@@ -2,6 +2,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Any
+from datetime import datetime
 import anthropic
 from anthropic.types import TextBlock, ToolUseBlock
 from calendar_handler import CalendarHandler
@@ -703,6 +704,10 @@ Du hjälper Isak och Rasmus med:
 - Lär dig deras preferenser och kommunikationsstil
 - Anpassa dig efter feedback
 - Om något inte fungerar - fråga och förbättra
+
+**DAGENS DATUM:**
+Idag är {datetime.now().strftime('%A %Y-%m-%d')} (veckodag: {datetime.now().strftime('%A')})
+Använd detta för att förstå relativa datum som "imorgon", "nästa tisdag", "förra veckan", etc.
 
 Workspace: {self.workspace_path}
 
