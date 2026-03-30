@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from claude_handler import ClaudeHandler
 from supabase_handler import SupabaseHandler
 from calendar_handler import CalendarHandler
+from tts_handler import TTSHandler
 from datetime import date
 
 # Ladda environment variables
@@ -12,6 +13,7 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", os.path.expanduser("~"))
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -42,6 +44,11 @@ if GOOGLE_CALENDAR_REFRESH_TOKEN and GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         client_secret=GOOGLE_CLIENT_SECRET
     )
 
+# TTS handler (delad för alla)
+tts = None
+if OPENAI_API_KEY:
+    tts = TTSHandler(api_key=OPENAI_API_KEY)
+
 def get_claude_session(user_id: str) -> ClaudeHandler:
     """Hämta eller skapa Claude-session för användare"""
     if user_id not in claude_sessions:
@@ -62,6 +69,7 @@ async def on_ready():
     print(f"🤖 Claude Model: {CLAUDE_MODEL}")
     print(f"💾 Supabase: {'✅ Connected' if db else '❌ Not configured'}")
     print(f"📅 Google Calendar: {'✅ Connected' if calendar else '❌ Not configured'}")
+    print(f"🎤 TTS (Voice): {'✅ Connected' if tts else '❌ Not configured'}")
     print("\nTillgängliga kommandon:")
     print("  !ask <prompt>       - Fråga Claude något")
     print("  !read <filepath>    - Läs en fil")
@@ -84,6 +92,9 @@ async def ask_claude(ctx, *, prompt: str):
     """Fråga Claude något - den kan använda verktyg för filaccess"""
     async with ctx.typing():
         try:
+            # Kolla om användaren vill ha röst-svar
+            want_voice = any(phrase in prompt.lower() for phrase in ["svara med röst", "röst-svar", "röstmeddelande"])
+
             claude = get_claude_session(str(ctx.author.id))
             response = await claude.ask(prompt, user_name=ctx.author.display_name)
 
@@ -97,6 +108,24 @@ async def ask_claude(ctx, *, prompt: str):
                         await ctx.reply(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
                     else:
                         await ctx.send(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
+
+            # Generera röst-svar om begärt och TTS är konfigurerat
+            if want_voice and tts:
+                try:
+                    # Rensa bort markdown och specialtecken för bättre TTS
+                    clean_text = response.replace("**", "").replace("*", "").replace("#", "")
+
+                    # Generera audio
+                    audio_path = tts.generate_speech(clean_text, voice="nova")
+
+                    # Skicka audio-fil
+                    await ctx.send("🎤 Röst-svar:", file=discord.File(audio_path))
+
+                    # Rensa gamla filer
+                    tts.cleanup_old_files()
+
+                except Exception as e:
+                    await ctx.send(f"⚠️ Kunde inte generera röst-svar: {str(e)}")
 
         except Exception as e:
             await ctx.reply(f"❌ Fel: {str(e)}")

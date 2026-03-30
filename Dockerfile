@@ -16,9 +16,10 @@ COPY bot_v2.py bot.py
 COPY claude_handler.py .
 COPY supabase_handler.py .
 COPY calendar_handler.py .
+COPY tts_handler.py .
 
-# Skapa workspace directory (om behövs)
-RUN mkdir -p /workspace
+# Skapa workspace och audio directories
+RUN mkdir -p /workspace /tmp/gideon_audio
 
 # Kör boten
 CMD ["python", "bot.py"]
