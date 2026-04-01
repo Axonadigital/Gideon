@@ -10,7 +10,7 @@ primary_region = 'ams'
   dockerfile = 'Dockerfile'
 
 [env]
-  CLAUDE_MODEL = 'claude-sonnet-4-5-20250929'
+  CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
   WORKSPACE_PATH = '/workspace'
 
 [processes]
