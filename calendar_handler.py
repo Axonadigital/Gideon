@@ -169,6 +169,7 @@ class CalendarHandler:
             for event in events:
                 start = event['start'].get('dateTime', event['start'].get('date'))
                 summary = event.get('summary', 'Ingen titel')
+                event_id = event.get('id', 'N/A')
 
                 # Parsa datum
                 try:
@@ -180,7 +181,7 @@ class CalendarHandler:
                 location = event.get('location', '')
                 loc_str = f" 📍 {location}" if location else ""
 
-                result.append(f"• {formatted_time} - {summary}{loc_str}")
+                result.append(f"• {formatted_time} - {summary}{loc_str}\n  ID: `{event_id}`")
 
             return "\n".join(result)
 
@@ -212,3 +213,32 @@ class CalendarHandler:
             return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
         except:
             return None
+
+    def delete_event(self, event_id: str) -> str:
+        """
+        Ta bort event från kalendern
+
+        Args:
+            event_id: Google Calendar event ID (visas i get_events)
+
+        Returns:
+            Resultat-meddelande
+        """
+        if not self.service:
+            return "❌ Google Calendar inte konfigurerat!"
+
+        try:
+            self.service.events().delete(
+                calendarId='primary',
+                eventId=event_id,
+                sendUpdates='all'  # Skicka email-notifikationer till deltagare
+            ).execute()
+
+            return f"✅ Event borttaget (ID: {event_id})"
+
+        except HttpError as error:
+            if error.resp.status == 404:
+                return f"❌ Event hittades inte (ID: {event_id})"
+            return f"❌ Google Calendar API-fel: {error}"
+        except Exception as e:
+            return f"❌ Kunde inte ta bort event: {str(e)}"

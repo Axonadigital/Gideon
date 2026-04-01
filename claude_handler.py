@@ -1,22 +1,31 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import anthropic
 from anthropic.types import TextBlock, ToolUseBlock
 from calendar_handler import CalendarHandler
+from conversation_memory import ConversationMemory
 
 class ClaudeHandler:
     """Hanterar Claude API-anrop med file access tools"""
 
-    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-5-20250929", db=None, calendar=None):
+    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-5-20250929", db=None, calendar=None, user_id: Optional[str] = None):
         self.client = anthropic.Anthropic(api_key=api_key)
         self.workspace_path = Path(workspace_path).resolve()
         self.model = model
-        self.conversation_history = []
         self.db = db  # Supabase handler för att spara leads, KPIs, etc.
         self.calendar = calendar  # Calendar handler för Google Calendar
+
+        # Conversation memory system (korttidsminne + långtidsminne)
+        if db and user_id:
+            self.memory = ConversationMemory(db.client, user_id)
+        else:
+            self.memory = None
+
+        # Fallback för när memory inte är aktiverat
+        self.conversation_history = []
 
     def _get_safe_path(self, filepath: str) -> Path:
         """Säkerställ att sökvägen är inom workspace"""
@@ -274,6 +283,12 @@ class ClaudeHandler:
                 days_back=tool_input.get("days_back", 0),
                 max_results=tool_input.get("max_results", 10)
             )
+        elif tool_name == "delete_calendar_event":
+            if not self.calendar:
+                return "❌ Google Calendar inte konfigurerat!"
+            return self.calendar.delete_event(
+                event_id=tool_input.get("event_id")
+            )
         else:
             return f"❌ Okänt tool: {tool_name}"
 
@@ -528,7 +543,7 @@ class ClaudeHandler:
                 },
                 {
                     "name": "get_calendar_events",
-                    "description": "Hämta events från Google Calendar (både framåt och bakåt i tiden). Använd när användaren frågar 'vad har jag för möten?', 'visa min kalender', 'vad hade jag för möten förra veckan?', etc.",
+                    "description": "Hämta events från Google Calendar (både framåt och bakåt i tiden). Använd när användaren frågar 'vad har jag för möten?', 'visa min kalender', 'vad hade jag för möten förra veckan?', etc. Visar event ID som kan användas för att ta bort events.",
                     "input_schema": {
                         "type": "object",
                         "properties": {
@@ -546,14 +561,67 @@ class ClaudeHandler:
                             }
                         }
                     }
+                },
+                {
+                    "name": "delete_calendar_event",
+                    "description": "Ta bort event från Google Calendar. Använd när användaren säger 'ta bort mötet', 'radera eventet', 'avboka', etc. Kräver event ID som visas i get_calendar_events.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "event_id": {
+                                "type": "string",
+                                "description": "Google Calendar event ID (hämtas från get_calendar_events)"
+                            }
+                        },
+                        "required": ["event_id"]
+                    }
                 }
             ])
 
         return tools
 
+    def _finalize_response(self, response_text: str, context_warning: Optional[str] = None) -> str:
+        """
+        Finalisera svar: spara i memory och lägg till warnings
+
+        Args:
+            response_text: Assistant's response
+            context_warning: Optional context warning
+
+        Returns:
+            Final response with warnings if applicable
+        """
+        # Spara i memory om tillgängligt
+        if self.memory:
+            self.memory.add_message('assistant', response_text)
+
+        # Lägg till warning om context är nästan fullt
+        if context_warning:
+            return f"{response_text}\n\n{context_warning}"
+
+        return response_text
+
     async def ask(self, user_message: str, user_name: str = "User") -> str:
         """Skicka ett meddelande till Claude och få svar (med tool support)"""
-        # Lägg till användarmeddelande i historik
+
+        # Använd ConversationMemory om tillgängligt
+        context_warning = None
+        long_term_context = ""
+
+        if self.memory:
+            # Ladda eller starta session
+            short_term, summaries = self.memory.start_or_resume_session()
+
+            # Konvertera till conversation_history format
+            self.conversation_history = short_term
+
+            # Formatera långtidsminne för system prompt
+            long_term_context = self.memory.format_context_for_claude(short_term, summaries)
+
+            # Lägg till användarmeddelande i memory
+            context_warning = self.memory.add_message('user', f"[{user_name}]: {user_message}")
+
+        # Lägg till användarmeddelande i historik (fallback eller komplettering)
         self.conversation_history.append({
             "role": "user",
             "content": f"[{user_name}]: {user_message}"
@@ -583,6 +651,7 @@ Var proaktiv och naturlig - du förstår från kontexten!""" if self.db else ""
 **KALENDER-VERKTYG:**
 - add_calendar_event: Lägg till möten, deadlines, påminnelser i Google Calendar
 - get_calendar_events: Visa både kommande OCH historiska events (framåt och bakåt i tiden)
+- delete_calendar_event: Ta bort events från kalendern (kräver event ID från get_calendar_events)
 
 **SMART TIDSHANTERING:**
 Du förstår naturligt språk för datum och tid:
@@ -705,9 +774,20 @@ Du hjälper Isak och Rasmus med:
 - Anpassa dig efter feedback
 - Om något inte fungerar - fråga och förbättra
 
-**DAGENS DATUM:**
+**DAGENS DATUM & TID:**
 Idag är {datetime.now().strftime('%A %Y-%m-%d')} (veckodag: {datetime.now().strftime('%A')})
+Klockan är: {datetime.now().strftime('%H:%M')}
 Använd detta för att förstå relativa datum som "imorgon", "nästa tisdag", "förra veckan", etc.
+
+**DIN RÖSTFUNKTION:**
+Du har TTS (Text-to-Speech) funktionalitet! När användaren skriver "svara med röst", "röst-svar" eller "röstmeddelande":
+- Din textbaserade svar skickas som vanligt
+- EN LJUDFIL genereras automatiskt och bifogas under ditt meddelande
+- Användaren får alltså BÅDE text OCH ljud
+- Du behöver INTE be användaren att "klicka på ljudfilen" - den är redan där
+- Säg gärna något i stil med: "🎤 Svarar med röst!" för att bekräfta att ljudfil bifogas
+
+{long_term_context}
 
 Workspace: {self.workspace_path}
 
@@ -749,7 +829,7 @@ Kommunicera på svenska."""
                     "role": "assistant",
                     "content": response.content
                 })
-                return final_response
+                return self._finalize_response(final_response, context_warning)
 
             # Kör tools
             tool_results = []
@@ -771,8 +851,12 @@ Kommunicera på svenska."""
                 "content": tool_results
             })
 
-        return "⚠️ Max antal tool-anrop nåddes. Försök igen med en mer specifik fråga."
+        return self._finalize_response("⚠️ Max antal tool-anrop nåddes. Försök igen med en mer specifik fråga.", context_warning)
 
     def reset_conversation(self):
         """Nollställ konversationshistorik"""
-        self.conversation_history = []
+        if self.memory:
+            return self.memory.reset_session()
+        else:
+            self.conversation_history = []
+            return "🔄 Konversationshistorik nollställd!"

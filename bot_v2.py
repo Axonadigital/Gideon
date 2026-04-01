@@ -1,4 +1,5 @@
 import os
+import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -6,6 +7,7 @@ from claude_handler import ClaudeHandler
 from supabase_handler import SupabaseHandler
 from calendar_handler import CalendarHandler
 from tts_handler import TTSHandler
+from http_api import GideonHTTPAPI
 from datetime import date
 
 # Ladda environment variables
@@ -14,6 +16,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GIDEON_API_KEY = os.getenv("GIDEON_API_KEY")  # För Siri Shortcuts
 WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", os.path.expanduser("~"))
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -57,7 +60,8 @@ def get_claude_session(user_id: str) -> ClaudeHandler:
             workspace_path=WORKSPACE_PATH,
             model=CLAUDE_MODEL,
             db=db,  # Skicka in Supabase så Claude kan använda den
-            calendar=calendar  # Skicka in Calendar så Claude kan använda den
+            calendar=calendar,  # Skicka in Calendar så Claude kan använda den
+            user_id=user_id  # Skicka in user_id för minnesystemet
         )
     return claude_sessions[user_id]
 
@@ -85,6 +89,70 @@ async def on_ready():
     print("  !avsluta-dag        - Git commit + push")
     print("  !info               - Visa hjälp")
 
+@bot.event
+async def on_message(message):
+    """Lyssna på alla meddelanden och svara automatiskt (utom på kommandon)"""
+    # Ignorera meddelanden från bottar
+    if message.author.bot:
+        return
+
+    # Om meddelandet börjar med ! så är det ett kommando - låt command handler ta hand om det
+    if message.content.startswith('!'):
+        await bot.process_commands(message)
+        return
+
+    # Svara automatiskt på alla andra meddelanden
+    async with message.channel.typing():
+        try:
+            # Kolla om användaren vill ha röst-svar
+            want_voice = any(phrase in message.content.lower() for phrase in ["svara med röst", "röst-svar", "röstmeddelande"])
+
+            claude = get_claude_session(str(message.author.id))
+
+            # Använd timeout för att förhindra att Discord heartbeat blockeras
+            try:
+                response = await asyncio.wait_for(
+                    claude.ask(message.content, user_name=message.author.display_name),
+                    timeout=120.0  # Max 2 minuter
+                )
+            except asyncio.TimeoutError:
+                await message.reply("⏱️ Timeout - svaret tog för lång tid. Försök med en enklare fråga!")
+                return
+
+            # Splitta långa svar (Discord limit: 2000 tecken)
+            if len(response) <= 2000:
+                await message.reply(response)
+            else:
+                chunks = [response[i:i+1990] for i in range(0, len(response), 1990)]
+                for i, chunk in enumerate(chunks):
+                    if i == 0:
+                        await message.reply(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
+                    else:
+                        await message.channel.send(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
+
+            # Generera röst-svar om begärt
+            if want_voice and tts:
+                try:
+                    # Ta bort markdown och formatering för TTS
+                    clean_text = response.replace("**", "").replace("*", "").replace("#", "").replace("`", "")
+
+                    # Generera ljudfil
+                    audio_path = tts.generate_speech(clean_text, voice="nova")
+
+                    # Skicka ljudfil
+                    await message.channel.send("🎤 Röst-svar:", file=discord.File(audio_path))
+
+                    # Cleanup
+                    tts.cleanup_old_files()
+                except Exception as e:
+                    await message.channel.send(f"⚠️ Kunde inte generera röst: {e}")
+
+        except Exception as e:
+            await message.reply(f"❌ Fel: {e}")
+
+    # Viktigt: Detta krävs för att kommandon ska fungera
+    await bot.process_commands(message)
+
 # ==================== BEFINTLIGA KOMMANDON ====================
 
 @bot.command(name="ask")
@@ -96,7 +164,16 @@ async def ask_claude(ctx, *, prompt: str):
             want_voice = any(phrase in prompt.lower() for phrase in ["svara med röst", "röst-svar", "röstmeddelande"])
 
             claude = get_claude_session(str(ctx.author.id))
-            response = await claude.ask(prompt, user_name=ctx.author.display_name)
+
+            # Använd timeout för att förhindra att Discord heartbeat blockeras
+            try:
+                response = await asyncio.wait_for(
+                    claude.ask(prompt, user_name=ctx.author.display_name),
+                    timeout=120.0  # Max 2 minuter
+                )
+            except asyncio.TimeoutError:
+                await ctx.reply("⏱️ Timeout - svaret tog för lång tid. Försök med en enklare fråga!")
+                return
 
             # Splitta långa svar (Discord limit: 2000 tecken)
             if len(response) <= 2000:
@@ -429,25 +506,22 @@ async def info_command(ctx):
 
     await ctx.reply(help_text)
 
-# ==================== EVENT HANDLERS ====================
-
-@bot.event
-async def on_message(message):
-    """Hantera meddelanden"""
-    if message.author == bot.user:
-        return
-
-    # Tillåt @ mentions som alternativ till !ask
-    if bot.user.mentioned_in(message) and not message.mention_everyone:
-        content = message.content.replace(f'<@{bot.user.id}>', '').strip()
-        if content:
-            ctx = await bot.get_context(message)
-            await ask_claude(ctx, prompt=content)
-            return
-
-    await bot.process_commands(message)
-
 # ==================== MAIN ====================
+
+async def start_services():
+    """Starta både Discord bot och HTTP API"""
+    # Starta HTTP API om API key finns
+    http_runner = None
+    if GIDEON_API_KEY:
+        http_api = GideonHTTPAPI(get_claude_session, GIDEON_API_KEY)
+        http_runner = await http_api.start(port=8080)
+        print("🌐 HTTP API aktiverad för Siri Shortcuts")
+    else:
+        print("⚠️ GIDEON_API_KEY saknas - HTTP API inaktiverad")
+
+    # Starta Discord bot
+    async with bot:
+        await bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
@@ -458,4 +532,4 @@ if __name__ == "__main__":
         exit(1)
 
     print("🚀 Startar Gideon...")
-    bot.run(DISCORD_TOKEN)
+    asyncio.run(start_services())

@@ -17,6 +17,8 @@ COPY claude_handler.py .
 COPY supabase_handler.py .
 COPY calendar_handler.py .
 COPY tts_handler.py .
+COPY conversation_memory.py .
+COPY http_api.py .
 
 # Skapa workspace och audio directories
 RUN mkdir -p /workspace /tmp/gideon_audio
