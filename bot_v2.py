@@ -509,19 +509,31 @@ async def info_command(ctx):
 # ==================== MAIN ====================
 
 async def start_services():
-    """Starta både Discord bot och HTTP API"""
-    # Starta HTTP API om API key finns
-    http_runner = None
+    """Starta både Discord bot och HTTP API parallellt"""
+    tasks = []
+
+    # Lägg till HTTP API task om API key finns
     if GIDEON_API_KEY:
-        http_api = GideonHTTPAPI(get_claude_session, GIDEON_API_KEY)
-        http_runner = await http_api.start(port=8080)
-        print("🌐 HTTP API aktiverad för Siri Shortcuts")
+        async def run_http_api():
+            http_api = GideonHTTPAPI(get_claude_session, GIDEON_API_KEY)
+            await http_api.start(port=8080)
+            print("🌐 HTTP API aktiverad för Siri Shortcuts")
+            # Håll HTTP servern igång
+            await asyncio.Future()  # Kör för alltid
+
+        tasks.append(run_http_api())
     else:
         print("⚠️ GIDEON_API_KEY saknas - HTTP API inaktiverad")
 
-    # Starta Discord bot
-    async with bot:
-        await bot.start(DISCORD_TOKEN)
+    # Lägg till Discord bot task
+    async def run_discord_bot():
+        async with bot:
+            await bot.start(DISCORD_TOKEN)
+
+    tasks.append(run_discord_bot())
+
+    # Kör alla tasks parallellt
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
