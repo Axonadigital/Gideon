@@ -7,8 +7,11 @@ from claude_handler import ClaudeHandler
 from supabase_handler import SupabaseHandler
 from calendar_handler import CalendarHandler
 from tts_handler import TTSHandler
+from crm_handler import CRMHandler, CRMError
 from http_api import GideonHTTPAPI
 from datetime import date
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 # Ladda environment variables
 load_dotenv()
@@ -24,6 +27,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GOOGLE_CALENDAR_REFRESH_TOKEN = os.getenv("GOOGLE_CALENDAR_REFRESH_TOKEN")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+
+# CRM-integration
+CRM_EDGE_FUNCTION_URL = os.getenv("CRM_EDGE_FUNCTION_URL")
+CRM_BOT_SECRET = os.getenv("CRM_BOT_SECRET")
+CRM_ALERTS_CHANNEL_ID = os.getenv("CRM_ALERTS_CHANNEL_ID")   # Dagliga påminnelser
+CRM_REPORTS_CHANNEL_ID = os.getenv("CRM_REPORTS_CHANNEL_ID") # Veckoapporter + AI-analys
 
 # Skapa bot med intents
 intents = discord.Intents.default()
@@ -52,6 +61,11 @@ tts = None
 if OPENAI_API_KEY:
     tts = TTSHandler(api_key=OPENAI_API_KEY)
 
+# CRM handler
+crm = None
+if CRM_EDGE_FUNCTION_URL and CRM_BOT_SECRET:
+    crm = CRMHandler(url=CRM_EDGE_FUNCTION_URL, secret=CRM_BOT_SECRET)
+
 def get_claude_session(user_id: str) -> ClaudeHandler:
     """Hämta eller skapa Claude-session för användare"""
     if user_id not in claude_sessions:
@@ -74,6 +88,11 @@ async def on_ready():
     print(f"💾 Supabase: {'✅ Connected' if db else '❌ Not configured'}")
     print(f"📅 Google Calendar: {'✅ Connected' if calendar else '❌ Not configured'}")
     print(f"🎤 TTS (Voice): {'✅ Connected' if tts else '❌ Not configured'}")
+    print(f"🏢 CRM: {'✅ Connected' if crm else '❌ Not configured (CRM_EDGE_FUNCTION_URL/CRM_BOT_SECRET saknas)'}")
+
+    # Starta CRM-scheduler om CRM är konfigurerat
+    if crm:
+        _start_crm_scheduler()
     print("\nTillgängliga kommandon:")
     print("  !ask <prompt>       - Fråga Claude något")
     print("  !read <filepath>    - Läs en fil")
@@ -88,6 +107,9 @@ async def on_ready():
     print("  !prioritera         - AI-hjälp med prioritering")
     print("  !avsluta-dag        - Git commit + push")
     print("  !info               - Visa hjälp")
+    print("  !crm pipeline       - CRM pipeline-status")
+    print("  !crm rapport        - Veckans CRM-rapport")
+    print("  !crm analys         - AI-säljanalys")
 
 @bot.event
 async def on_message(message):
@@ -505,6 +527,227 @@ async def info_command(ctx):
     """.format(workspace=WORKSPACE_PATH)
 
     await ctx.reply(help_text)
+
+# ==================== CRM-SCHEDULER ====================
+
+def _start_crm_scheduler():
+    """Starta schemalagda CRM-jobb."""
+    scheduler = AsyncIOScheduler(timezone="Europe/Stockholm")
+
+    # Varje dag 08:00 – försenade tasks + followups
+    scheduler.add_job(
+        _post_daily_reminders,
+        CronTrigger(hour=8, minute=0),
+        id="crm_daily_reminders",
+        replace_existing=True,
+    )
+
+    # Måndag 09:00 – veckorapport
+    scheduler.add_job(
+        _post_weekly_report,
+        CronTrigger(day_of_week="mon", hour=9, minute=0),
+        id="crm_weekly_report",
+        replace_existing=True,
+    )
+
+    # Fredag 15:00 – AI-säljanalys
+    scheduler.add_job(
+        _post_ai_analysis,
+        CronTrigger(day_of_week="fri", hour=15, minute=0),
+        id="crm_ai_analysis",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    print("⏰ CRM-scheduler startad (dagliga påminnelser + veckoapporter)")
+
+
+async def _post_daily_reminders():
+    """Posta försenade tasks och followups i alerts-kanalen."""
+    if not crm or not CRM_ALERTS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(int(CRM_ALERTS_CHANNEL_ID))
+    if not channel:
+        print(f"⚠️ CRM: alerts-kanal {CRM_ALERTS_CHANNEL_ID} hittades inte")
+        return
+    try:
+        tasks, followups = await asyncio.gather(
+            crm.call_action("list_tasks_due"),
+            crm.call_action("list_followups"),
+        )
+        if tasks:
+            await channel.send(crm.format_tasks(tasks))
+        if followups:
+            await channel.send(crm.format_followups(followups))
+    except CRMError as e:
+        print(f"⚠️ CRM daily reminders fel: {e}")
+
+
+async def _post_weekly_report():
+    """Posta veckorapport i reports-kanalen."""
+    if not crm or not CRM_REPORTS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(int(CRM_REPORTS_CHANNEL_ID))
+    if not channel:
+        print(f"⚠️ CRM: reports-kanal {CRM_REPORTS_CHANNEL_ID} hittades inte")
+        return
+    try:
+        data = await crm.call_action("get_weekly_report")
+        await channel.send(crm.format_weekly_report(data))
+    except CRMError as e:
+        print(f"⚠️ CRM weekly report fel: {e}")
+
+
+async def _post_ai_analysis():
+    """Posta AI-säljanalys i reports-kanalen."""
+    if not crm or not CRM_REPORTS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(int(CRM_REPORTS_CHANNEL_ID))
+    if not channel:
+        print(f"⚠️ CRM: reports-kanal {CRM_REPORTS_CHANNEL_ID} hittades inte")
+        return
+    try:
+        data = await crm.call_action("get_ai_sales_analysis")
+        await channel.send("**🤖 Fredagsanalys från Gideon**\n" + crm.format_ai_analysis(data))
+    except CRMError as e:
+        print(f"⚠️ CRM AI analysis fel: {e}")
+
+
+# ==================== CRM-KOMMANDON ====================
+
+@bot.group(name="crm", invoke_without_command=True)
+async def crm_group(ctx):
+    """CRM-kommandon – se !crm help"""
+    await ctx.reply(
+        "**CRM-kommandon:**\n"
+        "`!crm pipeline`     – Pipeline-sammanfattning\n"
+        "`!crm rapport`      – Veckans rapport\n"
+        "`!crm deals`        – Lista aktiva deals\n"
+        "`!crm tasks`        – Försenade tasks\n"
+        "`!crm followups`    – Försenade followups\n"
+        "`!crm performance`  – Säljprestanda per person\n"
+        "`!crm analys`       – AI-säljanalys (tar ~10s)"
+    )
+
+
+@crm_group.command(name="pipeline")
+async def crm_pipeline(ctx):
+    """Visa pipeline-sammanfattning"""
+    if not crm:
+        await ctx.reply("❌ CRM inte konfigurerat (CRM_EDGE_FUNCTION_URL saknas)")
+        return
+    async with ctx.typing():
+        try:
+            data = await crm.call_action("get_pipeline_summary")
+            await ctx.reply(crm.format_pipeline(data))
+        except CRMError as e:
+            await ctx.reply(f"❌ CRM-fel: {e}")
+
+
+@crm_group.command(name="rapport")
+async def crm_rapport(ctx):
+    """Visa veckans CRM-rapport"""
+    if not crm:
+        await ctx.reply("❌ CRM inte konfigurerat")
+        return
+    async with ctx.typing():
+        try:
+            data = await crm.call_action("get_weekly_report")
+            await ctx.reply(crm.format_weekly_report(data))
+        except CRMError as e:
+            await ctx.reply(f"❌ CRM-fel: {e}")
+
+
+@crm_group.command(name="deals")
+async def crm_deals(ctx, stage: str = None):
+    """Lista aktiva deals: !crm deals [stage]"""
+    if not crm:
+        await ctx.reply("❌ CRM inte konfigurerat")
+        return
+    async with ctx.typing():
+        try:
+            kwargs = {"stage": stage} if stage else {}
+            data = await crm.call_action("list_deals", **kwargs)
+            if not data:
+                await ctx.reply("Inga deals hittades.")
+                return
+            lines = [f"💼 **Deals{f' ({stage})' if stage else ''}**"]
+            for d in data[:20]:
+                amount = f"{d.get('amount') or 0:,.0f} kr".replace(",", " ")
+                company = (d.get("companies") or {}).get("name", "")
+                lines.append(f"  • **{d['name']}** {f'({company}) ' if company else ''}– `{d['stage']}` · {amount}")
+            if len(data) > 20:
+                lines.append(f"  _…och {len(data) - 20} till_")
+            await ctx.reply("\n".join(lines))
+        except CRMError as e:
+            await ctx.reply(f"❌ CRM-fel: {e}")
+
+
+@crm_group.command(name="tasks")
+async def crm_tasks(ctx):
+    """Visa försenade tasks"""
+    if not crm:
+        await ctx.reply("❌ CRM inte konfigurerat")
+        return
+    async with ctx.typing():
+        try:
+            data = await crm.call_action("list_tasks_due")
+            await ctx.reply(crm.format_tasks(data))
+        except CRMError as e:
+            await ctx.reply(f"❌ CRM-fel: {e}")
+
+
+@crm_group.command(name="followups")
+async def crm_followups(ctx):
+    """Visa försenade followups"""
+    if not crm:
+        await ctx.reply("❌ CRM inte konfigurerat")
+        return
+    async with ctx.typing():
+        try:
+            data = await crm.call_action("list_followups")
+            await ctx.reply(crm.format_followups(data))
+        except CRMError as e:
+            await ctx.reply(f"❌ CRM-fel: {e}")
+
+
+@crm_group.command(name="performance")
+async def crm_performance(ctx):
+    """Visa säljprestanda per person (30 dagar)"""
+    if not crm:
+        await ctx.reply("❌ CRM inte konfigurerat")
+        return
+    async with ctx.typing():
+        try:
+            data = await crm.call_action("get_sales_performance")
+            await ctx.reply(crm.format_performance(data))
+        except CRMError as e:
+            await ctx.reply(f"❌ CRM-fel: {e}")
+
+
+@crm_group.command(name="analys")
+async def crm_analys(ctx):
+    """AI-analys av säljprocessen (tar ~10 sekunder)"""
+    if not crm:
+        await ctx.reply("❌ CRM inte konfigurerat")
+        return
+    async with ctx.typing():
+        try:
+            data = await crm.call_action("get_ai_sales_analysis")
+            text = crm.format_ai_analysis(data)
+            # Dela upp om texten är för lång för Discord
+            if len(text) <= 2000:
+                await ctx.reply(text)
+            else:
+                chunks = [text[i:i+1990] for i in range(0, len(text), 1990)]
+                for i, chunk in enumerate(chunks):
+                    if i == 0:
+                        await ctx.reply(chunk)
+                    else:
+                        await ctx.send(chunk)
+        except CRMError as e:
+            await ctx.reply(f"❌ CRM-fel: {e}")
+
 
 # ==================== MAIN ====================
 
