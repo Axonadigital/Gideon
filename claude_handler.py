@@ -378,53 +378,6 @@ class ClaudeHandler:
         if self.db:
             tools.extend([
                 {
-                    "name": "add_lead",
-                    "description": "Lägg till nytt lead (potentiell kund) i databasen. Använd när användaren nämner ett företag eller kontakt de vill hålla koll på.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "foretag": {
-                                "type": "string",
-                                "description": "Företagets namn"
-                            },
-                            "kontaktperson": {
-                                "type": "string",
-                                "description": "Kontaktpersonens namn (valfritt)"
-                            },
-                            "status": {
-                                "type": "string",
-                                "description": "Status: 'ny', 'kontaktad', 'intresserad', 'förhandling', 'kund', 'ej_intresserad' (default: ny)"
-                            },
-                            "tjanst": {
-                                "type": "string",
-                                "description": "Tjänst de är intresserade av: 'chatbot', 'voice_agent', 'crm', 'hemsida', etc."
-                            },
-                            "anteckningar": {
-                                "type": "string",
-                                "description": "Ytterligare anteckningar"
-                            },
-                            "skapad_av": {
-                                "type": "string",
-                                "description": "Vem som skapade leadet (default: Gideon)"
-                            }
-                        },
-                        "required": ["foretag"]
-                    }
-                },
-                {
-                    "name": "get_leads",
-                    "description": "Hämta leads från databasen. Kan filtrera på status.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "status": {
-                                "type": "string",
-                                "description": "Filtrera på status (valfritt): 'ny', 'kontaktad', 'intresserad', etc."
-                            }
-                        }
-                    }
-                },
-                {
                     "name": "add_kpi",
                     "description": "Logga en KPI (nyckeltal) som hemsidor_salda, moten_bokade, intakter, etc.",
                     "input_schema": {
@@ -630,19 +583,19 @@ class ClaudeHandler:
         # System prompt
         db_tools_info = """
 **TILLGÄNGLIGA VERKTYG:**
-- add_lead: Lägg till leads (potentiella kunder)
-- get_leads: Hämta och visa leads
 - add_kpi: Logga KPIs (nyckeltal som 'hemsidor_salda', 'moten_bokade', etc.)
 - get_kpis: Visa statistik och framsteg
 - add_reflektion: Spara reflektioner och anteckningar
 - reset_chat: Rensa chatten när användaren säger "rensa chatten", "börja om", "ny konversation"
 
+**VIKTIGT - LEADS OCH FÖRSÄLJNING:**
+All information om leads, deals, pipeline, kunder och försäljning kommer ENBART från CRM-systemet.
+Om CRM-data finns injicerad i meddelandet, använd ENBART den datan. Hämta ALDRIG leads från lokala verktyg.
+
 **NÄR DU SKA AGERA AUTOMATISKT:**
-- Någon nämner ett företag eller kontakt → Spara som lead (add_lead)
 - De pratar om försäljning/resultat → Fråga om KPI ska loggas
 - De beskriver problem eller möjlighet → Föreslå lösning + följdfrågor
 - De nämner möte/uppföljning → Påminn om att dokumentera
-- "Visa mina leads" → använd get_leads
 - "Rensa chatten" → använd reset_chat
 
 Var proaktiv och naturlig - du förstår från kontexten!""" if self.db else ""
