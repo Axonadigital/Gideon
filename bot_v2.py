@@ -135,7 +135,7 @@ async def on_message(message):
                 try:
                     actions = _detect_crm_actions(message.content)
                     if actions:
-                        crm_context = await asyncio.wait_for(_fetch_crm_context(actions), timeout=15.0)
+                        crm_context = await asyncio.wait_for(_fetch_crm_context(actions), timeout=20.0)
                 except asyncio.TimeoutError:
                     pass
                 except Exception:
@@ -477,11 +477,12 @@ async def info_command(ctx):
 # ==================== CRM NATURLIG SPRÅKFÖRSTÅELSE ====================
 
 # Breda nyckelordsmatcher – träffar alla vanliga säljrelaterade frågor på svenska
+# get_ai_sales_analysis exkluderas – för tung för auto-fetch (10-15s), använd !crm analys
 _CRM_KEYWORDS = {
     "get_pipeline_summary": [
         "pipeline", "deal", "affär", "försälj", "lead", "kund", "kontakta",
         "prioriter", "prio", "status", "läge", "hur går", "hur ser", "vad har vi",
-        "potential", "prospect", "möjlighet",
+        "potential", "prospect", "möjlighet", "analys", "fokus", "fokusera",
     ],
     "list_followups": [
         "ringa", "ring", "followup", "follow up", "uppföljning", "callback",
@@ -491,11 +492,7 @@ _CRM_KEYWORDS = {
         "task", "uppgift", "att göra", "todo", "försenad", "akut",
     ],
     "get_weekly_report": [
-        "veckorapport", "veckan", "hur gick", "aktivitet", "sammanfatta veckan",
-    ],
-    "get_ai_sales_analysis": [
-        "analys", "analysera", "rekommendation", "råd", "säljhälsa",
-        "vad borde", "vad ska", "fokusera", "strategi",
+        "veckorapport", "hur gick veckan", "sammanfatta veckan", "veckans rapport",
     ],
 }
 
