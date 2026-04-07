@@ -12,7 +12,6 @@ from http_api import GideonHTTPAPI
 from datetime import date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-import anthropic
 
 # Ladda environment variables
 load_dotenv()
@@ -130,11 +129,11 @@ async def on_message(message):
             # Kolla om användaren vill ha röst-svar
             want_voice = any(phrase in message.content.lower() for phrase in ["svara med röst", "röst-svar", "röstmeddelande"])
 
-            # CRM-kontext: detektera intent och hämta relevant data parallellt
+            # CRM-kontext: detektera intent och hämta relevant data
             crm_context = ""
             if crm:
                 try:
-                    actions = await asyncio.wait_for(_detect_crm_actions(message.content), timeout=5.0)
+                    actions = _detect_crm_actions(message.content)
                     if actions:
                         crm_context = await asyncio.wait_for(_fetch_crm_context(actions), timeout=15.0)
                 except asyncio.TimeoutError:
@@ -477,51 +476,42 @@ async def info_command(ctx):
 
 # ==================== CRM NATURLIG SPRÅKFÖRSTÅELSE ====================
 
-_crm_classifier_client = None
+# Breda nyckelordsmatcher – träffar alla vanliga säljrelaterade frågor på svenska
+_CRM_KEYWORDS = {
+    "get_pipeline_summary": [
+        "pipeline", "deal", "affär", "försälj", "lead", "kund", "kontakta",
+        "prioriter", "prio", "status", "läge", "hur går", "hur ser", "vad har vi",
+        "potential", "prospect", "möjlighet",
+    ],
+    "list_followups": [
+        "ringa", "ring", "followup", "follow up", "uppföljning", "callback",
+        "återring", "kontakt idag", "vem ska vi", "ta kontakt",
+    ],
+    "list_tasks_due": [
+        "task", "uppgift", "att göra", "todo", "försenad", "akut",
+    ],
+    "get_weekly_report": [
+        "veckorapport", "veckan", "hur gick", "aktivitet", "sammanfatta veckan",
+    ],
+    "get_ai_sales_analysis": [
+        "analys", "analysera", "rekommendation", "råd", "säljhälsa",
+        "vad borde", "vad ska", "fokusera", "strategi",
+    ],
+}
 
-def _get_classifier_client() -> anthropic.Anthropic:
-    global _crm_classifier_client
-    if _crm_classifier_client is None:
-        _crm_classifier_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    return _crm_classifier_client
+def _detect_crm_actions(message: str) -> list[str]:
+    """Matcha meddelandet mot CRM-nyckelord och returnera relevanta actions."""
+    text = message.lower()
+    matched = []
+    for action, keywords in _CRM_KEYWORDS.items():
+        if any(kw in text for kw in keywords):
+            matched.append(action)
 
-async def _detect_crm_actions(message: str) -> list[str]:
-    """Använd Claude Haiku för att avgöra vilka CRM-actions som behövs.
-    Returnerar en lista med action-namn, eller tom lista om inte CRM-relaterat."""
-    client = _get_classifier_client()
-    prompt = f"""Analysera detta meddelande och avgör om det handlar om försäljning, CRM, pipeline, deals, leads, kunder, followups, uppgifter eller säljrapporter.
+    # Om pipeline matchas, ta alltid med followups (vanligtvis intressant ihop)
+    if "get_pipeline_summary" in matched and "list_followups" not in matched:
+        matched.append("list_followups")
 
-Meddelande: "{message}"
-
-Svara ENBART med en kommaseparerad lista av dessa action-namn (eller "none" om inte CRM-relaterat):
-- get_pipeline_summary  (pipeline, deals, hur går det, försäljning, affärer)
-- get_weekly_report     (veckorapport, hur gick veckan, aktivitet)
-- list_followups        (ringa, followup, försenade samtal, callbacks)
-- list_tasks_due        (tasks, uppgifter, att göra, försenade)
-- get_sales_performance (prestanda, säljare, vem säljer mest)
-- get_ai_sales_analysis (analys, säljhälsa, rekommendationer, råd)
-
-Exempel:
-"hur går försäljningen?" → get_pipeline_summary
-"vem ska vi ringa idag?" → list_followups
-"ge mig en analys" → get_ai_sales_analysis
-"hur mår bolaget?" → none
-
-Svar:"""
-
-    resp = await asyncio.to_thread(
-        client.messages.create,
-        model="claude-haiku-4-5-20251001",
-        max_tokens=50,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    result = resp.content[0].text.strip().lower()
-    if result == "none" or not result:
-        return []
-    return [a.strip() for a in result.split(",") if a.strip() in {
-        "get_pipeline_summary", "get_weekly_report", "list_followups",
-        "list_tasks_due", "get_sales_performance", "get_ai_sales_analysis"
-    }]
+    return matched
 
 
 async def _fetch_crm_context(actions: list[str]) -> str:
