@@ -71,7 +71,7 @@ class CRMHandler:
         for f in followups[:15]:
             company = (f.get("companies") or {}).get("name", "okänt företag")
             due = (f.get("followup_date") or "")[:10]
-            outcome = f.get("outcome") or "–"
+            outcome = f.get("call_outcome") or "–"
             lines.append(f"  • **{company}** – {outcome[:70]} ({due})")
         if len(followups) > 15:
             lines.append(f"  _…och {len(followups) - 15} till_")
