@@ -157,16 +157,7 @@ async def on_message(message):
                 await message.reply("⏱️ Timeout - svaret tog för lång tid. Försök med en enklare fråga!")
                 return
 
-            # Splitta långa svar (Discord limit: 2000 tecken)
-            if len(response) <= 2000:
-                await message.reply(response)
-            else:
-                chunks = [response[i:i+1990] for i in range(0, len(response), 1990)]
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        await message.reply(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
-                    else:
-                        await message.channel.send(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
+            await send_long(message.channel, response, reply_to=message)
 
             # Generera röst-svar om begärt
             if want_voice and tts:
@@ -213,16 +204,7 @@ async def ask_claude(ctx, *, prompt: str):
                 await ctx.reply("⏱️ Timeout - svaret tog för lång tid. Försök med en enklare fråga!")
                 return
 
-            # Splitta långa svar (Discord limit: 2000 tecken)
-            if len(response) <= 2000:
-                await ctx.reply(response)
-            else:
-                chunks = [response[i:i+1990] for i in range(0, len(response), 1990)]
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        await ctx.reply(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
-                    else:
-                        await ctx.send(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
+            await send_long(ctx, response, reply_to=ctx)
 
             # Generera röst-svar om begärt och TTS är konfigurerat
             if want_voice and tts:
@@ -283,15 +265,7 @@ Var tydlig med vad som sparades och pushades!"""
             claude = get_claude_session(str(ctx.author.id))
             response = await claude.ask(prompt, user_name=ctx.author.display_name)
 
-            if len(response) <= 2000:
-                await ctx.reply(f"📦 **Avslutar dagen för {ctx.author.display_name}**\n\n{response}")
-            else:
-                chunks = [response[i:i+1990] for i in range(0, len(response), 1990)]
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        await ctx.reply(f"📦 **Avslutar dagen** (Del {i+1}/{len(chunks)})\n\n{chunk}")
-                    else:
-                        await ctx.send(f"📄 Del {i+1}/{len(chunks)}:\n{chunk}")
+            await send_long(ctx, f"📦 **Avslutar dagen för {ctx.author.display_name}**\n\n{response}", reply_to=ctx)
 
         except Exception as e:
             await ctx.reply(f"❌ Fel vid avslut: {str(e)}")
@@ -474,6 +448,27 @@ async def info_command(ctx):
 
     await ctx.reply(help_text)
 
+# ==================== DISCORD HJÄLPFUNKTIONER ====================
+
+async def send_long(ctx_or_channel, text: str, reply_to=None):
+    """Skicka ett meddelande och dela upp det om det överstiger 2000 tecken."""
+    CHUNK = 1950  # Marginal för "📄 Del X/Y:\n"-prefix
+    if len(text) <= 2000:
+        if reply_to:
+            await reply_to.reply(text)
+        else:
+            await ctx_or_channel.send(text)
+        return
+
+    chunks = [text[i:i+CHUNK] for i in range(0, len(text), CHUNK)]
+    for i, chunk in enumerate(chunks):
+        content = f"📄 Del {i+1}/{len(chunks)}:\n{chunk}"
+        if i == 0 and reply_to:
+            await reply_to.reply(content)
+        else:
+            await ctx_or_channel.send(content)
+
+
 # ==================== CRM NATURLIG SPRÅKFÖRSTÅELSE ====================
 
 # Breda nyckelordsmatcher – träffar alla vanliga säljrelaterade frågor på svenska
@@ -594,9 +589,9 @@ async def _post_daily_reminders():
             crm.call_action("list_followups"),
         )
         if tasks:
-            await channel.send(crm.format_tasks(tasks))
+            await send_long(channel, crm.format_tasks(tasks))
         if followups:
-            await channel.send(crm.format_followups(followups))
+            await send_long(channel, crm.format_followups(followups))
     except CRMError as e:
         print(f"⚠️ CRM daily reminders fel: {e}")
 
@@ -611,7 +606,7 @@ async def _post_weekly_report():
         return
     try:
         data = await crm.call_action("get_weekly_report")
-        await channel.send(crm.format_weekly_report(data))
+        await send_long(channel, crm.format_weekly_report(data))
     except CRMError as e:
         print(f"⚠️ CRM weekly report fel: {e}")
 
@@ -626,7 +621,7 @@ async def _post_ai_analysis():
         return
     try:
         data = await crm.call_action("get_ai_sales_analysis")
-        await channel.send("**🤖 Fredagsanalys från Gideon**\n" + crm.format_ai_analysis(data))
+        await send_long(channel, "**🤖 Fredagsanalys från Gideon**\n" + crm.format_ai_analysis(data))
     except CRMError as e:
         print(f"⚠️ CRM AI analysis fel: {e}")
 
@@ -753,16 +748,7 @@ async def crm_analys(ctx):
         try:
             data = await crm.call_action("get_ai_sales_analysis")
             text = crm.format_ai_analysis(data)
-            # Dela upp om texten är för lång för Discord
-            if len(text) <= 2000:
-                await ctx.reply(text)
-            else:
-                chunks = [text[i:i+1990] for i in range(0, len(text), 1990)]
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        await ctx.reply(chunk)
-                    else:
-                        await ctx.send(chunk)
+            await send_long(ctx, text, reply_to=ctx)
         except CRMError as e:
             await ctx.reply(f"❌ CRM-fel: {e}")
 
