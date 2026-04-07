@@ -12,6 +12,7 @@ from http_api import GideonHTTPAPI
 from datetime import date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import anthropic
 
 # Ladda environment variables
 load_dotenv()
@@ -129,12 +130,28 @@ async def on_message(message):
             # Kolla om användaren vill ha röst-svar
             want_voice = any(phrase in message.content.lower() for phrase in ["svara med röst", "röst-svar", "röstmeddelande"])
 
+            # CRM-kontext: detektera intent och hämta relevant data parallellt
+            crm_context = ""
+            if crm:
+                try:
+                    actions = await asyncio.wait_for(_detect_crm_actions(message.content), timeout=5.0)
+                    if actions:
+                        crm_context = await asyncio.wait_for(_fetch_crm_context(actions), timeout=15.0)
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    pass
+
+            prompt = message.content
+            if crm_context:
+                prompt = f"{message.content}\n\n{crm_context}"
+
             claude = get_claude_session(str(message.author.id))
 
             # Använd timeout för att förhindra att Discord heartbeat blockeras
             try:
                 response = await asyncio.wait_for(
-                    claude.ask(message.content, user_name=message.author.display_name),
+                    claude.ask(prompt, user_name=message.author.display_name),
                     timeout=120.0  # Max 2 minuter
                 )
             except asyncio.TimeoutError:
@@ -279,81 +296,6 @@ Var tydlig med vad som sparades och pushades!"""
 
         except Exception as e:
             await ctx.reply(f"❌ Fel vid avslut: {str(e)}")
-
-# ==================== NYA KOMMANDON: LEADS ====================
-
-@bot.group(name="lead", invoke_without_command=True)
-async def lead(ctx):
-    """Lead-hantering - använd !lead add eller !lead list"""
-    await ctx.reply("Använd `!lead add` eller `!lead list` eller `!lead update`")
-
-@lead.command(name="add")
-async def lead_add(ctx, företag: str, *, info: str = ""):
-    """Lägg till ny lead: !lead add "Företag AB" kontakt:Kalle status:ny tjänst:chatbot"""
-    if not db:
-        await ctx.reply("❌ Supabase inte konfigurerat!")
-        return
-
-    try:
-        # Parsa info-strängen
-        kontakt = None
-        status = "ny"
-        tjänst = None
-        anteckningar = None
-
-        if info:
-            parts = info.split()
-            for part in parts:
-                if ":" in part:
-                    key, value = part.split(":", 1)
-                    if key == "kontakt":
-                        kontakt = value
-                    elif key == "status":
-                        status = value
-                    elif key == "tjänst":
-                        tjänst = value
-                else:
-                    anteckningar = (anteckningar or "") + " " + part
-
-        # Lägg till i databas
-        lead_data = db.add_lead(
-            företag=företag,
-            kontaktperson=kontakt,
-            status=status,
-            tjänst=tjänst,
-            anteckningar=anteckningar.strip() if anteckningar else None,
-            skapad_av=ctx.author.display_name
-        )
-
-        await ctx.reply(f"✅ Lead tillagd: **{företag}**\nStatus: {status}\nID: {lead_data['id']}")
-
-    except Exception as e:
-        await ctx.reply(f"❌ Kunde inte lägga till lead: {str(e)}")
-
-@lead.command(name="list")
-async def lead_list(ctx, status: str = None):
-    """Visa leads: !lead list [status]"""
-    if not db:
-        await ctx.reply("❌ Supabase inte konfigurerat!")
-        return
-
-    try:
-        if status:
-            leads = db.get_leads(status=status)
-            title = f"📋 Leads med status '{status}'"
-        else:
-            leads = db.get_aktiva_leads()
-            title = "📋 Aktiva leads"
-
-        if not leads:
-            await ctx.reply(f"{title}: Inga hittades.")
-            return
-
-        formatted = db.format_lead_list(leads)
-        await ctx.reply(f"{title}:\n\n{formatted}")
-
-    except Exception as e:
-        await ctx.reply(f"❌ Fel: {str(e)}")
 
 # ==================== NYA KOMMANDON: REFLEKTIONER ====================
 
@@ -504,9 +446,14 @@ async def info_command(ctx):
 `!list [directory]` - Lista filer
 `!reset` - Nollställ konversation
 
-**Lead-tracking:**
-`!lead add "Företag" kontakt:Namn status:ny tjänst:chatbot` - Ny lead
-`!lead list [status]` - Visa leads
+**CRM (eller skriv fritt – Gideon förstår):**
+`!crm pipeline` - Pipeline per stage
+`!crm rapport` - Veckans aktivitet
+`!crm analys` - AI-säljanalys
+`!crm deals [stage]` - Lista deals
+`!crm tasks` - Försenade tasks
+`!crm followups` - Försenade followups
+`!crm performance` - Säljprestanda per person
 
 **Reflektioner:**
 `!reflektion <text>` - Logga daglig reflektion
@@ -527,6 +474,90 @@ async def info_command(ctx):
     """.format(workspace=WORKSPACE_PATH)
 
     await ctx.reply(help_text)
+
+# ==================== CRM NATURLIG SPRÅKFÖRSTÅELSE ====================
+
+_crm_classifier_client = None
+
+def _get_classifier_client() -> anthropic.Anthropic:
+    global _crm_classifier_client
+    if _crm_classifier_client is None:
+        _crm_classifier_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    return _crm_classifier_client
+
+async def _detect_crm_actions(message: str) -> list[str]:
+    """Använd Claude Haiku för att avgöra vilka CRM-actions som behövs.
+    Returnerar en lista med action-namn, eller tom lista om inte CRM-relaterat."""
+    client = _get_classifier_client()
+    prompt = f"""Analysera detta meddelande och avgör om det handlar om försäljning, CRM, pipeline, deals, leads, kunder, followups, uppgifter eller säljrapporter.
+
+Meddelande: "{message}"
+
+Svara ENBART med en kommaseparerad lista av dessa action-namn (eller "none" om inte CRM-relaterat):
+- get_pipeline_summary  (pipeline, deals, hur går det, försäljning, affärer)
+- get_weekly_report     (veckorapport, hur gick veckan, aktivitet)
+- list_followups        (ringa, followup, försenade samtal, callbacks)
+- list_tasks_due        (tasks, uppgifter, att göra, försenade)
+- get_sales_performance (prestanda, säljare, vem säljer mest)
+- get_ai_sales_analysis (analys, säljhälsa, rekommendationer, råd)
+
+Exempel:
+"hur går försäljningen?" → get_pipeline_summary
+"vem ska vi ringa idag?" → list_followups
+"ge mig en analys" → get_ai_sales_analysis
+"hur mår bolaget?" → none
+
+Svar:"""
+
+    resp = await asyncio.to_thread(
+        client.messages.create,
+        model="claude-haiku-4-5-20251001",
+        max_tokens=50,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    result = resp.content[0].text.strip().lower()
+    if result == "none" or not result:
+        return []
+    return [a.strip() for a in result.split(",") if a.strip() in {
+        "get_pipeline_summary", "get_weekly_report", "list_followups",
+        "list_tasks_due", "get_sales_performance", "get_ai_sales_analysis"
+    }]
+
+
+async def _fetch_crm_context(actions: list[str]) -> str:
+    """Hämta CRM-data parallellt och formatera som kontext-sträng."""
+    if not crm or not actions:
+        return ""
+
+    results = await asyncio.gather(
+        *[crm.call_action(action) for action in actions],
+        return_exceptions=True
+    )
+
+    parts = []
+    formatters = {
+        "get_pipeline_summary": crm.format_pipeline,
+        "get_weekly_report": crm.format_weekly_report,
+        "list_followups": crm.format_followups,
+        "list_tasks_due": crm.format_tasks,
+        "get_sales_performance": crm.format_performance,
+        "get_ai_sales_analysis": crm.format_ai_analysis,
+    }
+
+    for action, result in zip(actions, results):
+        if isinstance(result, Exception):
+            continue
+        formatter = formatters.get(action)
+        if formatter:
+            try:
+                parts.append(formatter(result))
+            except Exception:
+                pass
+
+    if not parts:
+        return ""
+    return "\n\n**Aktuell CRM-data:**\n" + "\n\n".join(parts)
+
 
 # ==================== CRM-SCHEDULER ====================
 
