@@ -69,10 +69,10 @@ class CRMHandler:
             return "✅ Inga försenade followups!"
         lines = [f"📞 **Försenade followups ({len(followups)} st)**"]
         for f in followups[:15]:
-            company = (f.get("companies") or {}).get("name", "okänt företag")
-            due = (f.get("followup_date") or "")[:10]
-            outcome = f.get("call_outcome") or "–"
-            lines.append(f"  • **{company}** – {outcome[:70]} ({due})")
+            company = f.get("name") or "okänt företag"
+            due = (f.get("next_followup_date") or "")[:10]
+            note = f.get("next_action_note") or f.get("next_action_type") or "–"
+            lines.append(f"  • **{company}** – {note[:70]} ({due})")
         if len(followups) > 15:
             lines.append(f"  _…och {len(followups) - 15} till_")
         return "\n".join(lines)
