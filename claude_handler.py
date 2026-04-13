@@ -215,6 +215,111 @@ class ClaudeHandler:
         except Exception as e:
             return f"❌ Kunde inte spara reflektion: {str(e)}"
 
+    def _add_todo(self, uppgift: str, kategori: str = "backlog", prioritet: str = "normal") -> str:
+        """
+        Lägg till todo i personlig-assistent/todos/
+
+        Args:
+            uppgift: Beskrivning av uppgiften
+            kategori: 'idag' för dagens uppgifter, 'backlog' för senare, eller specifik kategori
+            prioritet: 'hög', 'normal', 'låg' (används för idag.md)
+        """
+        try:
+            # Bestäm vilken fil
+            if kategori == "idag":
+                todo_file = Path(self.workspace_path) / "personlig-assistent" / "todos" / "idag.md"
+
+                # Läs befintlig fil
+                if todo_file.exists():
+                    with open(todo_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                else:
+                    return "❌ idag.md finns inte!"
+
+                # Hitta rätt sektion baserat på prioritet
+                if prioritet == "hög":
+                    # Lägg till under Prioriterade Uppgifter
+                    marker = "## ✅ Prioriterade Uppgifter"
+                    if marker in content:
+                        lines = content.split('\n')
+                        insert_index = next(i for i, line in enumerate(lines) if marker in line)
+
+                        # Hitta nästa numrerade rad (1., 2., 3.)
+                        next_num = 1
+                        for i in range(insert_index + 1, len(lines)):
+                            if lines[i].strip().startswith(('1.', '2.', '3.')):
+                                # Räkna befintliga
+                                if lines[i].strip() != f"{next_num}.":
+                                    next_num += 1
+
+                        # Lägg till efter sista numret
+                        lines.insert(insert_index + next_num, f"{next_num}. {uppgift}")
+                        content = '\n'.join(lines)
+                else:
+                    # Lägg till under Övrigt
+                    marker = "## 📋 Övrigt"
+                    if marker in content:
+                        lines = content.split('\n')
+                        insert_index = next(i for i, line in enumerate(lines) if marker in line)
+                        lines.insert(insert_index + 2, f"- {uppgift}")
+                        content = '\n'.join(lines)
+
+                # Skriv tillbaka
+                with open(todo_file, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                return f"✅ Todo tillagd i **idag.md** (Prioritet: {prioritet}): {uppgift}"
+
+            else:
+                # Lägg till i backlog.md
+                todo_file = Path(self.workspace_path) / "personlig-assistent" / "todos" / "backlog.md"
+
+                if not todo_file.exists():
+                    return "❌ backlog.md finns inte!"
+
+                with open(todo_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # Mappa kategori till sektion
+                kategori_map = {
+                    "ai": "## 🤖 AI & Tech",
+                    "tech": "## 🤖 AI & Tech",
+                    "träning": "## 💪 Träning & Hälsa",
+                    "hälsa": "## 💪 Träning & Hälsa",
+                    "praktiskt": "## 📦 Praktiska Ärenden",
+                    "innehåll": "## 🎥 Innehåll",
+                    "backlog": "## 🤖 AI & Tech"  # Default
+                }
+
+                marker = kategori_map.get(kategori.lower(), "## 🤖 AI & Tech")
+
+                if marker in content:
+                    lines = content.split('\n')
+                    insert_index = next(i for i, line in enumerate(lines) if marker in line)
+
+                    # Hitta sista checkbox-raden i sektionen
+                    last_checkbox_index = insert_index
+                    for i in range(insert_index + 1, len(lines)):
+                        if lines[i].strip().startswith('- [ ]'):
+                            last_checkbox_index = i
+                        elif lines[i].strip().startswith('##'):
+                            break
+
+                    # Lägg till efter sista checkbox
+                    lines.insert(last_checkbox_index + 1, f"- [ ] {uppgift}")
+                    content = '\n'.join(lines)
+
+                    # Skriv tillbaka
+                    with open(todo_file, 'w', encoding='utf-8') as f:
+                        f.write(content)
+
+                    return f"✅ Todo tillagd i **backlog.md** ({marker}): {uppgift}"
+                else:
+                    return f"❌ Kunde inte hitta sektion '{marker}' i backlog.md"
+
+        except Exception as e:
+            return f"❌ Kunde inte lägga till todo: {str(e)}"
+
     def _reset_chat(self) -> str:
         """Rensa konversationshistorik"""
         self.conversation_history = []
@@ -264,6 +369,12 @@ class ClaudeHandler:
             )
         elif tool_name == "reset_chat":
             return self._reset_chat()
+        elif tool_name == "add_todo":
+            return self._add_todo(
+                uppgift=tool_input["uppgift"],
+                kategori=tool_input.get("kategori", "backlog"),
+                prioritet=tool_input.get("prioritet", "normal")
+            )
         elif tool_name == "add_calendar_event":
             if not self.calendar:
                 return "❌ Google Calendar inte konfigurerat!"
@@ -453,6 +564,28 @@ class ClaudeHandler:
                         "type": "object",
                         "properties": {}
                     }
+                },
+                {
+                    "name": "add_todo",
+                    "description": "Lägg till todo i personlig-assistent todo-system. Använd när användaren nämner något de ska göra, vill komma ihåg, eller planera. VIKTIGT: Fråga ALLTID användaren först om de vill spara det! Föreslå kategorin baserat på innehåll.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "uppgift": {
+                                "type": "string",
+                                "description": "Beskrivning av uppgiften (t.ex. 'Fixa CRM-integration', 'Ringa Stefan', 'Köpa proteinpulver')"
+                            },
+                            "kategori": {
+                                "type": "string",
+                                "description": "Var ska den sparas? 'idag' för dagens uppgifter, 'ai'/'tech' för AI & Tech, 'träning'/'hälsa' för Träning & Hälsa, 'praktiskt' för Praktiska Ärenden, 'innehåll' för Innehåll, 'backlog' för generellt (default: backlog)"
+                            },
+                            "prioritet": {
+                                "type": "string",
+                                "description": "Endast för kategori='idag': 'hög' (prioriterade uppgifter 1-3), 'normal' (övrigt) (default: normal)"
+                            }
+                        },
+                        "required": ["uppgift"]
+                    }
                 }
             ])
 
@@ -597,6 +730,23 @@ Om CRM-data finns injicerad i meddelandet, använd ENBART den datan. Hämta ALDR
 - De beskriver problem eller möjlighet → Föreslå lösning + följdfrågor
 - De nämner möte/uppföljning → Påminn om att dokumentera
 - "Rensa chatten" → använd reset_chat
+
+**TODO-HANTERING:**
+- add_todo: Spara uppgifter i todo-systemet
+- Identifiera automatiskt när användaren nämner saker de ska göra:
+  * "Vi borde...", "Nästa steg är...", "Kom ihåg att...", "Jag måste..."
+  * "Fixa X", "Kolla upp Y", "Boka Z"
+  * Projekt-tasks, möten att förbereda, uppföljningar
+- VIKTIGT: Fråga ALLTID först: "Vill du att jag lägger till det i [backlog/idag]?"
+- Föreslå rätt kategori:
+  * 'idag' om det ska göras idag/akut
+  * 'ai'/'tech' för tekniska/AI-relaterade saker
+  * 'träning' för träning/hälsa
+  * 'praktiskt' för vardagsärenden
+  * 'backlog' om oklart eller längre fram
+- Exempel:
+  User: "Vi borde fixa CRM-integrationen nästa vecka"
+  → Fråga: "Vill du att jag lägger till 'Fixa CRM-integration' i backlog (AI & Tech)?"
 
 Var proaktiv och naturlig - du förstår från kontexten!""" if self.db else ""
 
