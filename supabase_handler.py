@@ -183,6 +183,78 @@ class SupabaseHandler:
         response = self.client.table("denna_vecka_kpis").select("*").execute()
         return response.data
 
+    # ==================== TODOS ====================
+
+    def add_todo(
+        self,
+        uppgift: str,
+        kategori: str = "backlog",
+        prioritet: str = "normal",
+        skapad_av: Optional[str] = None,
+        deadline: Optional[date] = None,
+        anteckning: Optional[str] = None
+    ) -> Dict:
+        """Lägg till ny todo"""
+        data = {
+            "uppgift": uppgift,
+            "kategori": kategori,
+            "prioritet": prioritet,
+            "status": "öppen",
+            "skapad_av": skapad_av,
+            "deadline": deadline.isoformat() if deadline else None,
+            "anteckning": anteckning
+        }
+        # Ta bort None-värden
+        data = {k: v for k, v in data.items() if v is not None}
+
+        response = self.client.table("todos").insert(data).execute()
+        return response.data[0] if response.data else {}
+
+    def get_todos(
+        self,
+        kategori: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Dict]:
+        """Hämta todos (filtrerat om angivet)"""
+        query = self.client.table("todos").select("*").order("skapad_datum", desc=True).limit(limit)
+
+        if kategori:
+            query = query.eq("kategori", kategori)
+        if status:
+            query = query.eq("status", status)
+
+        response = query.execute()
+        return response.data
+
+    def get_öppna_todos(self) -> List[Dict]:
+        """Hämta alla öppna todos (status = öppen eller påbörjad)"""
+        response = self.client.table("öppna_todos").select("*").execute()
+        return response.data
+
+    def get_dagens_todos(self) -> List[Dict]:
+        """Hämta dagens todos (kategori = idag, status öppen/påbörjad)"""
+        response = self.client.table("dagens_todos").select("*").execute()
+        return response.data
+
+    def update_todo(self, todo_id: str, **kwargs) -> Dict:
+        """Uppdatera en todo"""
+        # Om status ändras till 'klar', sätt klar_datum
+        if kwargs.get("status") == "klar" and "klar_datum" not in kwargs:
+            kwargs["klar_datum"] = datetime.now().isoformat()
+
+        response = self.client.table("todos").update(kwargs).eq("id", todo_id).execute()
+        return response.data[0] if response.data else {}
+
+    def markera_todo_klar(self, todo_id: str) -> Dict:
+        """Markera en todo som klar"""
+        return self.update_todo(todo_id, status="klar", klar_datum=datetime.now().isoformat())
+
+    def radera_todo(self, todo_id: str) -> bool:
+        """Ta bort en todo"""
+        response = self.client.table("todos").delete().eq("id", todo_id).execute()
+        return len(response.data) > 0
+
     # ==================== MINNEN (pgvector) ====================
 
     def add_minne(
@@ -259,5 +331,52 @@ class SupabaseHandler:
             total = sum(item['värde'] for item in items)
             enhet = items[0].get('enhet', '')
             result.append(f"📊 **{namn}**: {total} {enhet}")
+
+        return "\n".join(result)
+
+    def format_todo_list(self, todos: List[Dict]) -> str:
+        """Formatera todos till läsbar lista"""
+        if not todos:
+            return "Inga todos hittades."
+
+        # Gruppera per kategori
+        grouped = {}
+        for todo in todos:
+            kategori = todo.get('kategori', 'backlog')
+            if kategori not in grouped:
+                grouped[kategori] = []
+            grouped[kategori].append(todo)
+
+        kategori_emoji = {
+            'idag': '📅',
+            'ai': '🤖',
+            'tech': '🤖',
+            'träning': '💪',
+            'hälsa': '💪',
+            'praktiskt': '📦',
+            'innehåll': '🎥',
+            'backlog': '📋'
+        }
+
+        result = []
+        for kategori, items in grouped.items():
+            emoji = kategori_emoji.get(kategori, '📋')
+            result.append(f"\n{emoji} **{kategori.capitalize()}** ({len(items)} st)")
+
+            for todo in items:
+                status_emoji = {
+                    'öppen': '⬜',
+                    'påbörjad': '🔄',
+                    'klar': '✅',
+                    'avbruten': '❌'
+                }.get(todo['status'], '⬜')
+
+                prioritet = todo.get('prioritet', 'normal')
+                prio_marker = '🔴 ' if prioritet == 'hög' else ''
+
+                uppgift = todo['uppgift']
+                deadline_str = f" (deadline: {todo['deadline']})" if todo.get('deadline') else ''
+
+                result.append(f"  {status_emoji} {prio_marker}{uppgift}{deadline_str}")
 
         return "\n".join(result)

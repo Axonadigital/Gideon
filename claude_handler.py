@@ -215,110 +215,106 @@ class ClaudeHandler:
         except Exception as e:
             return f"❌ Kunde inte spara reflektion: {str(e)}"
 
-    def _add_todo(self, uppgift: str, kategori: str = "backlog", prioritet: str = "normal") -> str:
-        """
-        Lägg till todo i personlig-assistent/todos/
+    def _add_todo(self, uppgift: str, kategori: str = "backlog", prioritet: str = "normal",
+                  skapad_av: str = "Gideon", deadline: str = None, anteckning: str = None) -> str:
+        """Lägg till todo i Supabase"""
+        if not self.db:
+            return "❌ Supabase inte konfigurerat!"
 
-        Args:
-            uppgift: Beskrivning av uppgiften
-            kategori: 'idag' för dagens uppgifter, 'backlog' för senare, eller specifik kategori
-            prioritet: 'hög', 'normal', 'låg' (används för idag.md)
-        """
         try:
-            # Bestäm vilken fil
-            if kategori == "idag":
-                todo_file = Path(self.workspace_path) / "personlig-assistent" / "todos" / "idag.md"
+            # Konvertera deadline från sträng om angivet
+            deadline_date = None
+            if deadline:
+                from datetime import datetime as dt
+                try:
+                    deadline_date = dt.strptime(deadline, "%Y-%m-%d").date()
+                except:
+                    pass  # Skippa om ogiltigt format
 
-                # Läs befintlig fil
-                if todo_file.exists():
-                    with open(todo_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                else:
-                    return "❌ idag.md finns inte!"
+            result = self.db.add_todo(
+                uppgift=uppgift,
+                kategori=kategori,
+                prioritet=prioritet,
+                skapad_av=skapad_av,
+                deadline=deadline_date,
+                anteckning=anteckning
+            )
 
-                # Hitta rätt sektion baserat på prioritet
-                if prioritet == "hög":
-                    # Lägg till under Prioriterade Uppgifter
-                    marker = "## ✅ Prioriterade Uppgifter"
-                    if marker in content:
-                        lines = content.split('\n')
-                        insert_index = next(i for i, line in enumerate(lines) if marker in line)
+            kategori_emoji = {
+                'idag': '📅',
+                'ai': '🤖',
+                'tech': '🤖',
+                'träning': '💪',
+                'hälsa': '💪',
+                'praktiskt': '📦',
+                'innehåll': '🎥',
+                'backlog': '📋'
+            }
+            emoji = kategori_emoji.get(kategori, '📋')
 
-                        # Hitta nästa numrerade rad (1., 2., 3.)
-                        next_num = 1
-                        for i in range(insert_index + 1, len(lines)):
-                            if lines[i].strip().startswith(('1.', '2.', '3.')):
-                                # Räkna befintliga
-                                if lines[i].strip() != f"{next_num}.":
-                                    next_num += 1
-
-                        # Lägg till efter sista numret
-                        lines.insert(insert_index + next_num, f"{next_num}. {uppgift}")
-                        content = '\n'.join(lines)
-                else:
-                    # Lägg till under Övrigt
-                    marker = "## 📋 Övrigt"
-                    if marker in content:
-                        lines = content.split('\n')
-                        insert_index = next(i for i, line in enumerate(lines) if marker in line)
-                        lines.insert(insert_index + 2, f"- {uppgift}")
-                        content = '\n'.join(lines)
-
-                # Skriv tillbaka
-                with open(todo_file, 'w', encoding='utf-8') as f:
-                    f.write(content)
-
-                return f"✅ Todo tillagd i **idag.md** (Prioritet: {prioritet}): {uppgift}"
-
-            else:
-                # Lägg till i backlog.md
-                todo_file = Path(self.workspace_path) / "personlig-assistent" / "todos" / "backlog.md"
-
-                if not todo_file.exists():
-                    return "❌ backlog.md finns inte!"
-
-                with open(todo_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-
-                # Mappa kategori till sektion
-                kategori_map = {
-                    "ai": "## 🤖 AI & Tech",
-                    "tech": "## 🤖 AI & Tech",
-                    "träning": "## 💪 Träning & Hälsa",
-                    "hälsa": "## 💪 Träning & Hälsa",
-                    "praktiskt": "## 📦 Praktiska Ärenden",
-                    "innehåll": "## 🎥 Innehåll",
-                    "backlog": "## 🤖 AI & Tech"  # Default
-                }
-
-                marker = kategori_map.get(kategori.lower(), "## 🤖 AI & Tech")
-
-                if marker in content:
-                    lines = content.split('\n')
-                    insert_index = next(i for i, line in enumerate(lines) if marker in line)
-
-                    # Hitta sista checkbox-raden i sektionen
-                    last_checkbox_index = insert_index
-                    for i in range(insert_index + 1, len(lines)):
-                        if lines[i].strip().startswith('- [ ]'):
-                            last_checkbox_index = i
-                        elif lines[i].strip().startswith('##'):
-                            break
-
-                    # Lägg till efter sista checkbox
-                    lines.insert(last_checkbox_index + 1, f"- [ ] {uppgift}")
-                    content = '\n'.join(lines)
-
-                    # Skriv tillbaka
-                    with open(todo_file, 'w', encoding='utf-8') as f:
-                        f.write(content)
-
-                    return f"✅ Todo tillagd i **backlog.md** ({marker}): {uppgift}"
-                else:
-                    return f"❌ Kunde inte hitta sektion '{marker}' i backlog.md"
-
+            return f"✅ Todo tillagd {emoji} **{kategori}** (ID: {result['id'][:8]}...): {uppgift}"
         except Exception as e:
             return f"❌ Kunde inte lägga till todo: {str(e)}"
+
+    def _get_todos(self, kategori: str = None, status: str = None) -> str:
+        """Hämta todos från Supabase"""
+        if not self.db:
+            return "❌ Supabase inte konfigurerat!"
+
+        try:
+            if kategori == "idag":
+                todos = self.db.get_dagens_todos()
+                title = "📅 Dagens todos"
+            elif status:
+                todos = self.db.get_todos(kategori=kategori, status=status)
+                title = f"Todos (kategori: {kategori or 'alla'}, status: {status})"
+            elif kategori:
+                todos = self.db.get_todos(kategori=kategori)
+                title = f"Todos för {kategori}"
+            else:
+                todos = self.db.get_öppna_todos()
+                title = "📋 Öppna todos"
+
+            if not todos:
+                return f"ℹ️ {title}: Inga hittades."
+
+            formatted = self.db.format_todo_list(todos)
+            return f"✅ {title}:\n{formatted}"
+        except Exception as e:
+            return f"❌ Kunde inte hämta todos: {str(e)}"
+
+    def _update_todo(self, todo_id: str, status: str = None, prioritet: str = None,
+                     deadline: str = None, anteckning: str = None) -> str:
+        """Uppdatera en todo"""
+        if not self.db:
+            return "❌ Supabase inte konfigurerat!"
+
+        try:
+            updates = {}
+            if status:
+                updates["status"] = status
+            if prioritet:
+                updates["prioritet"] = prioritet
+            if deadline:
+                updates["deadline"] = deadline
+            if anteckning:
+                updates["anteckning"] = anteckning
+
+            result = self.db.update_todo(todo_id, **updates)
+            return f"✅ Todo uppdaterad: {result['uppgift']}"
+        except Exception as e:
+            return f"❌ Kunde inte uppdatera todo: {str(e)}"
+
+    def _markera_todo_klar(self, todo_id: str) -> str:
+        """Markera en todo som klar"""
+        if not self.db:
+            return "❌ Supabase inte konfigurerat!"
+
+        try:
+            result = self.db.markera_todo_klar(todo_id)
+            return f"✅ Todo markerad som klar: {result['uppgift']}"
+        except Exception as e:
+            return f"❌ Kunde inte markera todo som klar: {str(e)}"
 
     def _reset_chat(self) -> str:
         """Rensa konversationshistorik"""
@@ -373,8 +369,26 @@ class ClaudeHandler:
             return self._add_todo(
                 uppgift=tool_input["uppgift"],
                 kategori=tool_input.get("kategori", "backlog"),
-                prioritet=tool_input.get("prioritet", "normal")
+                prioritet=tool_input.get("prioritet", "normal"),
+                skapad_av=tool_input.get("skapad_av", "Gideon"),
+                deadline=tool_input.get("deadline"),
+                anteckning=tool_input.get("anteckning")
             )
+        elif tool_name == "get_todos":
+            return self._get_todos(
+                kategori=tool_input.get("kategori"),
+                status=tool_input.get("status")
+            )
+        elif tool_name == "update_todo":
+            return self._update_todo(
+                todo_id=tool_input["todo_id"],
+                status=tool_input.get("status"),
+                prioritet=tool_input.get("prioritet"),
+                deadline=tool_input.get("deadline"),
+                anteckning=tool_input.get("anteckning")
+            )
+        elif tool_name == "markera_todo_klar":
+            return self._markera_todo_klar(todo_id=tool_input["todo_id"])
         elif tool_name == "add_calendar_event":
             if not self.calendar:
                 return "❌ Google Calendar inte konfigurerat!"
@@ -567,7 +581,7 @@ class ClaudeHandler:
                 },
                 {
                     "name": "add_todo",
-                    "description": "Lägg till todo i personlig-assistent todo-system. Använd när användaren nämner något de ska göra, vill komma ihåg, eller planera. VIKTIGT: Fråga ALLTID användaren först om de vill spara det! Föreslå kategorin baserat på innehåll.",
+                    "description": "Lägg till todo i Supabase. Använd när användaren nämner något de ska göra, vill komma ihåg, eller planera. VIKTIGT: Fråga ALLTID användaren först om de vill spara det! Föreslå kategorin baserat på innehåll.",
                     "input_schema": {
                         "type": "object",
                         "properties": {
@@ -577,14 +591,87 @@ class ClaudeHandler:
                             },
                             "kategori": {
                                 "type": "string",
-                                "description": "Var ska den sparas? 'idag' för dagens uppgifter, 'ai'/'tech' för AI & Tech, 'träning'/'hälsa' för Träning & Hälsa, 'praktiskt' för Praktiska Ärenden, 'innehåll' för Innehåll, 'backlog' för generellt (default: backlog)"
+                                "description": "'idag', 'ai', 'tech', 'träning', 'hälsa', 'praktiskt', 'innehåll', 'backlog' (default: backlog)"
                             },
                             "prioritet": {
                                 "type": "string",
-                                "description": "Endast för kategori='idag': 'hög' (prioriterade uppgifter 1-3), 'normal' (övrigt) (default: normal)"
+                                "description": "'hög', 'normal', 'låg' (default: normal)"
+                            },
+                            "skapad_av": {
+                                "type": "string",
+                                "description": "Vem som skapade (default: Gideon)"
+                            },
+                            "deadline": {
+                                "type": "string",
+                                "description": "Deadline i format YYYY-MM-DD (optional)"
+                            },
+                            "anteckning": {
+                                "type": "string",
+                                "description": "Extra anteckning om uppgiften (optional)"
                             }
                         },
                         "required": ["uppgift"]
+                    }
+                },
+                {
+                    "name": "get_todos",
+                    "description": "Hämta todos från Supabase. Filtrera på kategori och/eller status. Använd när användaren frågar 'vad har jag i backlog?', 'visa mina todos', 'vad ska jag göra idag?'",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "kategori": {
+                                "type": "string",
+                                "description": "Filtrera på kategori: 'idag', 'ai', 'träning', 'praktiskt', 'innehåll', 'backlog' (optional)"
+                            },
+                            "status": {
+                                "type": "string",
+                                "description": "Filtrera på status: 'öppen', 'påbörjad', 'klar', 'avbruten' (optional)"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "update_todo",
+                    "description": "Uppdatera en befintlig todo (ändra status, prioritet, deadline, etc.)",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "todo_id": {
+                                "type": "string",
+                                "description": "ID på todon som ska uppdateras (hämtas från get_todos)"
+                            },
+                            "status": {
+                                "type": "string",
+                                "description": "Ny status: 'öppen', 'påbörjad', 'klar', 'avbruten' (optional)"
+                            },
+                            "prioritet": {
+                                "type": "string",
+                                "description": "Ny prioritet: 'hög', 'normal', 'låg' (optional)"
+                            },
+                            "deadline": {
+                                "type": "string",
+                                "description": "Ny deadline YYYY-MM-DD (optional)"
+                            },
+                            "anteckning": {
+                                "type": "string",
+                                "description": "Ny anteckning (optional)"
+                            }
+                        },
+                        "required": ["todo_id"]
+                    }
+                },
+                {
+                    "name": "markera_todo_klar",
+                    "description": "Snabbkommando för att markera en todo som klar. Använd när användaren säger 'markera X som klar', 'jag är klar med Y'",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "todo_id": {
+                                "type": "string",
+                                "description": "ID på todon (hämtas från get_todos)"
+                            }
+                        },
+                        "required": ["todo_id"]
                     }
                 }
             ])
