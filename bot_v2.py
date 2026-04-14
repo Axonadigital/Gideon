@@ -9,9 +9,11 @@ from calendar_handler import CalendarHandler
 from tts_handler import TTSHandler
 from crm_handler import CRMHandler, CRMError
 from http_api import GideonHTTPAPI
-from datetime import date
+from datetime import date, datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from meeting_reminder import MeetingReminder
 
 # Ladda environment variables
 load_dotenv()
@@ -66,6 +68,12 @@ crm = None
 if CRM_EDGE_FUNCTION_URL and CRM_BOT_SECRET:
     crm = CRMHandler(url=CRM_EDGE_FUNCTION_URL, secret=CRM_BOT_SECRET)
 
+# Meeting Reminder handler
+meeting_reminder = None
+MEETING_ALERTS_CHANNEL_ID = os.getenv("MEETING_ALERTS_CHANNEL_ID")  # Discord-kanal för påminnelser
+if calendar and ANTHROPIC_API_KEY:
+    meeting_reminder = MeetingReminder(calendar, ANTHROPIC_API_KEY)
+
 def get_claude_session(user_id: str) -> ClaudeHandler:
     """Hämta eller skapa Claude-session för användare"""
     if user_id not in claude_sessions:
@@ -93,6 +101,19 @@ async def on_ready():
     # Starta CRM-scheduler om CRM är konfigurerat
     if crm:
         _start_crm_scheduler()
+
+    # Starta mötes-påminnelse-scheduler om konfigurerat
+    if meeting_reminder and MEETING_ALERTS_CHANNEL_ID:
+        _start_meeting_reminder_scheduler()
+        print(f"📅 Meeting Reminders: ✅ Connected (kanal: {MEETING_ALERTS_CHANNEL_ID})")
+    else:
+        missing = []
+        if not meeting_reminder:
+            missing.append("Calendar/Claude API")
+        if not MEETING_ALERTS_CHANNEL_ID:
+            missing.append("MEETING_ALERTS_CHANNEL_ID")
+        print(f"📅 Meeting Reminders: ❌ Not configured ({', '.join(missing)} saknas)")
+
     print("\nTillgängliga kommandon:")
     print("  !ask <prompt>       - Fråga Claude något")
     print("  !read <filepath>    - Läs en fil")
@@ -624,6 +645,78 @@ async def _post_ai_analysis():
         await send_long(channel, "**🤖 Fredagsanalys från Gideon**\n" + crm.format_ai_analysis(data))
     except CRMError as e:
         print(f"⚠️ CRM AI analysis fel: {e}")
+
+
+# ==================== MÖTES-PÅMINNELSER ====================
+
+def _start_meeting_reminder_scheduler():
+    """Starta schemalagd koll av mötes-påminnelser."""
+    scheduler = AsyncIOScheduler(timezone="Europe/Stockholm")
+
+    # Kolla möten varje timme
+    scheduler.add_job(
+        _check_meeting_reminders,
+        IntervalTrigger(hours=1),
+        id="meeting_reminders_check",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    print("⏰ Mötes-påminnelse-scheduler startad (kollar varje timme)")
+
+
+async def _check_meeting_reminders():
+    """Kolla om det finns möten som behöver påminnelser (24h email / 4h Discord)."""
+    if not meeting_reminder or not MEETING_ALERTS_CHANNEL_ID:
+        return
+
+    channel = bot.get_channel(int(MEETING_ALERTS_CHANNEL_ID))
+    if not channel:
+        print(f"⚠️ Meeting: alerts-kanal {MEETING_ALERTS_CHANNEL_ID} hittades inte")
+        return
+
+    try:
+        # Hämta kommande möten (48h framåt)
+        meetings = meeting_reminder.get_upcoming_meetings(hours_ahead=48)
+
+        if not meetings:
+            return
+
+        now = datetime.now()
+
+        for meeting in meetings:
+            time_until_meeting = meeting['start'] - now
+
+            # 24h email-påminnelse (TEST-MODE: visar bara förslag, skickar inte)
+            if timedelta(hours=23) < time_until_meeting < timedelta(hours=25):
+                # Generera email-förslag (skickar INTE)
+                if meeting['attendees']:
+                    # Generera email-text
+                    email_body = meeting_reminder._generate_email_reminder(meeting)
+
+                    for attendee_email in meeting['attendees']:
+                        # Skicka FÖRSLAG i Discord (skickar INTE email)
+                        await channel.send(
+                            f"📧 **Email-påminnelse REDO** (24h innan möte)\n\n"
+                            f"**Till:** {attendee_email}\n"
+                            f"**Möte:** {meeting['summary']}\n"
+                            f"**Tid:** {meeting['start'].strftime('%Y-%m-%d %H:%M')}\n"
+                            f"**Företag:** {meeting['company']}\n\n"
+                            f"**📝 Förslag på email-text:**\n"
+                            f"```\n{email_body}\n```\n\n"
+                            f"**Videolänk:** {meeting['link']}\n\n"
+                            f"⚠️ **TEST-MODE:** Email skickas INTE automatiskt.\n"
+                            f"Kopiera texten och skicka manuellt från info@axonadigital.se"
+                        )
+
+            # 4h SMS-påminnelse (Discord med förslag)
+            elif timedelta(hours=3, minutes=30) < time_until_meeting < timedelta(hours=4, minutes=30):
+                # Skicka Discord-påminnelse med SMS-förslag
+                reminder_message = meeting_reminder.generate_discord_reminder(meeting)
+                await channel.send(reminder_message)
+
+    except Exception as e:
+        print(f"❌ Meeting reminder fel: {e}")
 
 
 # ==================== CRM-KOMMANDON ====================

@@ -214,6 +214,46 @@ class CalendarHandler:
         except:
             return None
 
+    def get_events_raw(
+        self,
+        days_ahead: int = 7,
+        days_back: int = 0,
+        max_results: int = 50
+    ) -> List[Dict]:
+        """
+        Hämta events som strukturerad data (inte formaterad text)
+
+        Args:
+            days_ahead: Antal dagar framåt
+            days_back: Antal dagar bakåt
+            max_results: Max antal events
+
+        Returns:
+            Lista med event-dicts
+        """
+        if not self.service:
+            return []
+
+        try:
+            now = datetime.utcnow()
+            time_min = (now - timedelta(days=days_back)).isoformat() + 'Z'
+            time_max = (now + timedelta(days=days_ahead)).isoformat() + 'Z'
+
+            events_result = self.service.events().list(
+                calendarId='primary',
+                timeMin=time_min,
+                timeMax=time_max,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+
+            return events_result.get('items', [])
+
+        except Exception as e:
+            print(f"❌ Kunde inte hämta events: {e}")
+            return []
+
     def delete_event(self, event_id: str) -> str:
         """
         Ta bort event från kalendern
