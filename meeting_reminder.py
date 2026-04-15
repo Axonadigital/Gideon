@@ -51,14 +51,18 @@ class MeetingReminder:
 
         try:
             # Hämta rå events från kalendern
+            days = int(hours_ahead / 24) + 1
+            print(f"🔍 DEBUG: Hämtar events {days} dagar framåt...")
             events = self.calendar.get_events_raw(
-                days_ahead=int(hours_ahead / 24) + 1,
+                days_ahead=days,
                 max_results=50
             )
+            print(f"🔍 DEBUG: Fick {len(events)} events från kalendern")
 
             # Filtrera på relevanta möten
             relevant_meetings = []
             for event in events:
+                print(f"🔍 DEBUG: Kollar event: {event.get('summary', 'Ingen titel')}")
                 summary = event.get('summary', '')
 
                 if not self._is_relevant_meeting(summary):

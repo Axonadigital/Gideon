@@ -677,9 +677,12 @@ async def _check_meeting_reminders():
 
     try:
         # Hämta kommande möten (48h framåt)
+        print("🔍 DEBUG: Hämtar möten från kalendern...")
         meetings = meeting_reminder.get_upcoming_meetings(hours_ahead=48)
+        print(f"🔍 DEBUG: Hittade {len(meetings)} relevanta möten")
 
         if not meetings:
+            print("ℹ️ Inga relevanta möten hittades")
             return
 
         now = datetime.now()
