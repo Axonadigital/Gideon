@@ -158,7 +158,7 @@ class MeetingReminder:
             Email-text
         """
         # Använd Claude för att generera personlig email
-        prompt = f"""Generera en trevlig och avslappnad email-påminnelse för ett kundmöte.
+        prompt = f"""Generera en väldigt avslappnad och personlig email-påminnelse för ett kundmöte.
 
 Mötesinformation:
 - Titel: {meeting_info.get('summary', 'Möte')}
@@ -166,12 +166,13 @@ Mötesinformation:
 - Videolänk: {meeting_info.get('link', 'Kommer skickas separat')}
 
 Stil:
-- Trevlig och avslappnad
-- Kort och koncis
-- Svensk ton
-- Exempel: "Här kommer en påminnelse och videolänken på nytt: [länk]. Allt gott..."
+- Väldigt avslappnad och casual, som mellan bekanta
+- Kort och rakt på sak - max 2-3 meningar
+- Svensk, naturlig ton
+- Exempel: "Hej igen, här kommer möteslänken på nytt: [länk]. Tar fram demo:n tills dess!"
+- VIKTIGT: Inkludera videolänken i texten
 
-Skriv bara email-texten (utan ämnesrad), max 3-4 meningar."""
+Skriv bara email-texten (utan ämnesrad), max 2-3 meningar."""
 
         try:
             response = self.claude_client.messages.create(
@@ -187,16 +188,13 @@ Skriv bara email-texten (utan ämnesrad), max 3-4 meningar."""
         except Exception as e:
             print(f"⚠️ Kunde inte generera email med Claude: {e}")
             # Fallback till enkel template
-            return f"""Hej!
+            return f"""Hej igen!
 
-Här kommer en påminnelse om vårt möte {meeting_info.get('start', 'imorgon')}.
+Här kommer möteslänken på nytt: {meeting_info.get('link', 'Kommer skickas separat')}
 
-Videolänk: {meeting_info.get('link', 'Kommer skickas separat')}
+Mötet är {meeting_info.get('start', 'imorgon')}. Ser fram emot att prata!
 
-Allt gott!
-
-Mvh,
-Axona Digital"""
+/Axona Digital"""
 
     def _generate_sms_suggestion(self, meeting_info: Dict) -> str:
         """
