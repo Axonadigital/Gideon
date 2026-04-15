@@ -736,6 +736,22 @@ async def crm_group(ctx):
     )
 
 
+@bot.command(name="test-påminnelse")
+async def test_meeting_reminder(ctx):
+    """TEST: Kör mötes-påminnelse-check manuellt (istället för att vänta på scheduler)"""
+    if not meeting_reminder or not MEETING_ALERTS_CHANNEL_ID:
+        await ctx.reply("❌ Meeting Reminders inte konfigurerat")
+        return
+
+    async with ctx.typing():
+        await ctx.reply("🔍 Kollar kalendern efter möten som behöver påminnelser...")
+        try:
+            await _check_meeting_reminders()
+            await ctx.reply("✅ Koll klar! Om det finns möten som matchar ser du dem i <#1493857026319712316>")
+        except Exception as e:
+            await ctx.reply(f"❌ Fel: {e}")
+
+
 @crm_group.command(name="pipeline")
 async def crm_pipeline(ctx):
     """Visa pipeline-sammanfattning"""
