@@ -685,7 +685,11 @@ async def _check_meeting_reminders():
             print("ℹ️ Inga relevanta möten hittades")
             return
 
-        now = datetime.now()
+        # Använd timezone-aware datetime (Stockholm)
+        from datetime import timezone
+        import pytz
+        stockholm_tz = pytz.timezone('Europe/Stockholm')
+        now = datetime.now(stockholm_tz)
 
         for meeting in meetings:
             time_until_meeting = meeting['start'] - now
