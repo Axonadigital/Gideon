@@ -162,9 +162,29 @@ async def on_message(message):
                 except Exception:
                     pass
 
-            prompt = message.content
+            # Läs eventuell textbilaga från Discord och lägg in innehållet i prompten.
+            attachment_text = ""
+            attachment_name = ""
+            if message.attachments:
+                for att in message.attachments:
+                    if att.filename.endswith((".txt", ".md")) and att.size < 500_000:
+                        try:
+                            await message.channel.send(f"📎 Läser bifogad fil: **{att.filename}**...")
+                            attachment_bytes = await att.read()
+                            attachment_text = attachment_bytes.decode("utf-8", errors="replace")
+                            attachment_name = att.filename
+                            await message.channel.send(f"✅ {len(attachment_text):,} tecken inlästa.")
+                        except Exception as e:
+                            await message.channel.send(f"⚠️ Kunde inte läsa filen: {e}")
+                        break  # Bara första textfilen
+
+            base = message.content or "(bifogad fil)"
+            if attachment_text:
+                prompt = f"{base}\n\n[Bifogad fil: {attachment_name}]\n{attachment_text}"
+            else:
+                prompt = base
             if crm_context:
-                prompt = f"{message.content}\n\n{crm_context}"
+                prompt = f"{prompt}\n\n{crm_context}"
 
             claude = get_claude_session(str(message.author.id))
 
