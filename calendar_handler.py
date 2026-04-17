@@ -187,10 +187,12 @@ class CalendarHandler:
                     formatted_time = start
 
                 location = event.get('location', '')
+                hangout = event.get('hangoutLink', '')
                 loc_str = f" 📍 {location}" if location else ""
+                meet_str = " [Google Meet]" if hangout else ""
                 att_str = f" [{attendees_count} deltagare]" if attendees_count > 0 else " [inga externa deltagare]"
 
-                result.append(f"• {formatted_time} - {summary}{loc_str}{att_str}\n  ID: `{event_id}`")
+                result.append(f"• {formatted_time} - {summary}{loc_str}{meet_str}{att_str}\n  ID: `{event_id}`")
 
             return "\n".join(result)
 

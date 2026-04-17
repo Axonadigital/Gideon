@@ -930,8 +930,8 @@ Standardanrop per frågetype:
 
 **Filtrera events klokt:**
 Varje event har [X deltagare] eller [inga externa deltagare] i listan.
-Faktiska möten = har externa deltagare ELLER tydligt kundnamn i titeln (företag, "demo", "möte", "offert", "genomgång").
-Noteringar/block = [inga externa deltagare] + vaga titlar ("Borta", "Ledig", "Affärsutveckling", planering).
+Faktiska möten = har [Google Meet] ELLER externa deltagare ELLER nyckelord i titeln ("demo", "möte", "offert", "genomgång", företagsnamn).
+Noteringar/block = [inga externa deltagare] + inget [Google Meet] + vaga titlar ("Borta", "Ledig", "Affärsutveckling", planering).
 Visa bara faktiska möten som standard. Avsluta med: "Vill du se allt inklusive block och noteringar?" om du filtrerar bort något.""" if self.calendar else ""
 
         system_prompt = f"""Du är Gideon, en affärsdriven AI-assistent för Axona Digital AB.
