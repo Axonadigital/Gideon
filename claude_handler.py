@@ -1,5 +1,6 @@
 import os
 import subprocess
+import pytz
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -800,6 +801,15 @@ class ClaudeHandler:
             "content": f"[{user_name}]: {user_message}"
         })
 
+        # Timezone-aware tid för systemprompten
+        _tz = pytz.timezone('Europe/Stockholm')
+        _now = datetime.now(_tz)
+        _sv_days = ['måndag','tisdag','onsdag','torsdag','fredag','lördag','söndag']
+        _sv_months = ['januari','februari','mars','april','maj','juni',
+                      'juli','augusti','september','oktober','november','december']
+        _weekday = _sv_days[_now.weekday()]
+        _month = _sv_months[_now.month - 1]
+
         # System prompt
         db_tools_info = """
 **TILLGÄNGLIGA VERKTYG:**
@@ -965,8 +975,8 @@ Du hjälper Isak och Rasmus med:
 - Om något inte fungerar - fråga och förbättra
 
 **DAGENS DATUM & TID:**
-Idag är {datetime.now().strftime('%A %Y-%m-%d')} (veckodag: {datetime.now().strftime('%A')})
-Klockan är: {datetime.now().strftime('%H:%M')}
+Idag är {_weekday} {_now.strftime('%Y-%m-%d')} ({_now.day} {_month} {_now.year})
+Klockan är: {_now.strftime('%H:%M')} (Europe/Stockholm)
 Använd detta för att förstå relativa datum som "imorgon", "nästa tisdag", "förra veckan", etc.
 
 **DIN RÖSTFUNKTION:**
