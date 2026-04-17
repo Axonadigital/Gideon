@@ -407,7 +407,7 @@ class ClaudeHandler:
             return self.calendar.get_events(
                 days_ahead=tool_input.get("days_ahead", 7),
                 days_back=tool_input.get("days_back", 0),
-                max_results=tool_input.get("max_results", 10)
+                max_results=tool_input.get("max_results", 25)
             )
         elif tool_name == "delete_calendar_event":
             if not self.calendar:
@@ -917,7 +917,16 @@ User: "Visa allt från senaste veckan fram till nästa vecka"
 - Bekräfta ALLTID tid och datum innan bokning
 - Använd YYYY-MM-DD HH:MM format i API-anrop
 - Var specifik med timezone (Europe/Stockholm)
-- Om något är oklart: gör rimligt antagande och förklara det""" if self.calendar else ""
+- Om något är oklart: gör rimligt antagande och förklara det
+
+**VIKTIGT — Kalenderdata:**
+Anropa ALLTID get_calendar_events innan du svarar på frågor om möten, schema eller kalender.
+Svara aldrig från minnet om vad som finns i kalendern.
+
+Standardanrop per frågetype:
+- "idag" → get_calendar_events(days_ahead=0, max_results=25)
+- "igår" → get_calendar_events(days_back=1, days_ahead=0, max_results=25)
+- "den här veckan" / "kommande 7 dagar" → get_calendar_events(days_ahead=6, max_results=25)""" if self.calendar else ""
 
         system_prompt = f"""Du är Gideon, en affärsdriven AI-assistent för Axona Digital AB.
 

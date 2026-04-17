@@ -1,4 +1,5 @@
 import os
+import pytz
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from google.oauth2.credentials import Credentials
@@ -117,7 +118,7 @@ class CalendarHandler:
         self,
         days_ahead: int = 7,
         days_back: int = 0,
-        max_results: int = 10
+        max_results: int = 25
     ) -> str:
         """
         Hämta events från kalendern (framåt och/eller bakåt i tiden)
@@ -134,9 +135,11 @@ class CalendarHandler:
             return "❌ Google Calendar inte konfigurerat!"
 
         try:
-            now = datetime.utcnow()
-            time_min = (now - timedelta(days=days_back)).isoformat() + 'Z'
-            time_max = (now + timedelta(days=days_ahead)).isoformat() + 'Z'
+            _tz = pytz.timezone('Europe/Stockholm')
+            _now = datetime.now(_tz)
+            _today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+            time_min = (_today_start - timedelta(days=days_back)).isoformat()
+            time_max = (_today_start + timedelta(days=days_ahead + 1)).isoformat()
 
             events_result = self.service.events().list(
                 calendarId='primary',
@@ -235,9 +238,11 @@ class CalendarHandler:
             return []
 
         try:
-            now = datetime.utcnow()
-            time_min = (now - timedelta(days=days_back)).isoformat() + 'Z'
-            time_max = (now + timedelta(days=days_ahead)).isoformat() + 'Z'
+            _tz = pytz.timezone('Europe/Stockholm')
+            _now = datetime.now(_tz)
+            _today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+            time_min = (_today_start - timedelta(days=days_back)).isoformat()
+            time_max = (_today_start + timedelta(days=days_ahead + 1)).isoformat()
 
             events_result = self.service.events().list(
                 calendarId='primary',
