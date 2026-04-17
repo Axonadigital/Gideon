@@ -152,6 +152,9 @@ class CalendarHandler:
 
             events = events_result.get('items', [])
 
+            # Filtrera bort icke-default eventtyper (outOfOffice, focusTime, workingLocation)
+            events = [e for e in events if e.get('eventType', 'default') == 'default']
+
             if not events:
                 if days_back > 0 and days_ahead > 0:
                     return f"📅 Inga events hittades ({days_back} dagar bakåt till {days_ahead} dagar framåt)."
@@ -173,6 +176,8 @@ class CalendarHandler:
                 start = event['start'].get('dateTime', event['start'].get('date'))
                 summary = event.get('summary', 'Ingen titel')
                 event_id = event.get('id', 'N/A')
+                attendees = event.get('attendees', [])
+                attendees_count = len([a for a in attendees if not a.get('self', False)])
 
                 # Parsa datum
                 try:
@@ -183,8 +188,9 @@ class CalendarHandler:
 
                 location = event.get('location', '')
                 loc_str = f" 📍 {location}" if location else ""
+                att_str = f" [{attendees_count} deltagare]" if attendees_count > 0 else " [inga externa deltagare]"
 
-                result.append(f"• {formatted_time} - {summary}{loc_str}\n  ID: `{event_id}`")
+                result.append(f"• {formatted_time} - {summary}{loc_str}{att_str}\n  ID: `{event_id}`")
 
             return "\n".join(result)
 
