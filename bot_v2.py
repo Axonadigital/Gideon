@@ -14,6 +14,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from meeting_reminder import MeetingReminder
+from brain_handler import write_session_summary
+import re as _re
+import logging as _logging
+_brain_logger = _logging.getLogger("gideon.brain")
 
 # Ladda environment variables
 load_dotenv()
@@ -23,7 +27,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GIDEON_API_KEY = os.getenv("GIDEON_API_KEY")  # För Siri Shortcuts
 WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", os.path.expanduser("~"))
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GOOGLE_CALENDAR_REFRESH_TOKEN = os.getenv("GOOGLE_CALENDAR_REFRESH_TOKEN")
@@ -101,6 +105,9 @@ async def on_ready():
     # Starta CRM-scheduler om CRM är konfigurerat
     if crm:
         _start_crm_scheduler()
+
+    # Starta brain idle-flush scheduler (auto-summera sessioner som timeoutat)
+    _start_brain_idle_flush_scheduler()
 
     # Starta mötes-påminnelse-scheduler om konfigurerat
     if meeting_reminder and MEETING_ALERTS_CHANNEL_ID:
@@ -284,6 +291,96 @@ async def reset_conversation(ctx):
     claude = get_claude_session(str(ctx.author.id))
     claude.reset_conversation()
     await ctx.reply("🔄 Konversation nollställd!")
+
+
+_TOPIC_SLUG_RE = _re.compile(r"[^a-z0-9]+")
+
+
+def _derive_topic(messages: list) -> str:
+    """Härleder topic-slug från första user-meddelandet (max 40 chars)."""
+    for m in messages:
+        if m.get("role") == "user":
+            raw = m.get("content", "")
+            if isinstance(raw, list):
+                raw = " ".join(
+                    b.get("text", "") for b in raw
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            head = str(raw)[:50]
+            slug = _TOPIC_SLUG_RE.sub("-", head.lower()).strip("-")[:40]
+            if slug:
+                return slug
+    return "untitled-session"
+
+
+async def _flush_to_brain(claude, topic: str) -> dict:
+    """Kör synk write_session_summary i executor så vi inte blockerar event-loopen."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, write_session_summary, claude.conversation_history, topic
+    )
+
+
+@bot.command(name="flush")
+async def flush_session(ctx):
+    """Skriv session-summary till axona-brain och nollställ konversationen."""
+    claude = get_claude_session(str(ctx.author.id))
+    messages = list(claude.conversation_history)
+    if not messages:
+        await ctx.reply("Inget att flush:a — ingen aktiv konversation.")
+        return
+
+    topic = _derive_topic(messages)
+    async with ctx.typing():
+        result = await _flush_to_brain(claude, topic)
+
+    if result.get("error"):
+        await ctx.reply(
+            f"❌ Brain-write misslyckades: `{result['error']}`. Sessionen är fortfarande aktiv."
+        )
+        return
+
+    claude.reset_conversation()
+    await ctx.reply(
+        f"✅ Session sparad till brain → {result.get('url', result.get('path'))}"
+    )
+
+
+def _start_brain_idle_flush_scheduler():
+    """Pollar var 5:e min om någon session passerat SESSION_TIMEOUT_MINUTES.
+    Auto-flushar i så fall till brain innan den nollställs.
+    Vi rör inte conversation_memory.py — vi läser bara dess attribut.
+    """
+    scheduler = AsyncIOScheduler(timezone="Europe/Stockholm")
+
+    async def _poll():
+        for user_id, claude in list(claude_sessions.items()):
+            mem = getattr(claude, "memory", None)
+            if not mem or not mem.last_activity or not claude.conversation_history:
+                continue
+            idle_seconds = (datetime.now() - mem.last_activity).total_seconds()
+            if idle_seconds < mem.SESSION_TIMEOUT_MINUTES * 60:
+                continue
+
+            messages = list(claude.conversation_history)
+            topic = _derive_topic(messages)
+            try:
+                result = await _flush_to_brain(claude, topic)
+                if result.get("error"):
+                    _brain_logger.warning(
+                        "auto-flush misslyckades user=%s err=%s", user_id, result["error"]
+                    )
+                else:
+                    _brain_logger.info(
+                        "auto-flush OK user=%s url=%s", user_id, result.get("url")
+                    )
+                    claude.reset_conversation()
+            except Exception as e:  # defensiv — schedulern får aldrig dö
+                _brain_logger.exception("auto-flush exception user=%s: %s", user_id, e)
+
+    scheduler.add_job(_poll, IntervalTrigger(minutes=5))
+    scheduler.start()
+    print("⏰ Brain idle-flush scheduler startad (poll var 5 min)")
 
 @bot.command(name="avsluta-dag")
 async def avsluta_dag(ctx):

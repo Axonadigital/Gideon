@@ -8,11 +8,14 @@ import anthropic
 from anthropic.types import TextBlock, ToolUseBlock
 from calendar_handler import CalendarHandler
 from conversation_memory import ConversationMemory
+from brain_handler import read_brain_context, fetch_entity
+
+logger = __import__('logging').getLogger(__name__)
 
 class ClaudeHandler:
     """Hanterar Claude API-anrop med file access tools"""
 
-    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-5-20250929", db=None, calendar=None, user_id: Optional[str] = None):
+    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-6", db=None, calendar=None, user_id: Optional[str] = None):
         self.client = anthropic.Anthropic(api_key=api_key)
         self.workspace_path = Path(workspace_path).resolve()
         self.model = model
@@ -415,12 +418,35 @@ class ClaudeHandler:
             return self.calendar.delete_event(
                 event_id=tool_input.get("event_id")
             )
+        elif tool_name == "fetch_brain_entity":
+            query = tool_input.get("query", "")
+            result = fetch_entity(query)
+            return result if result else f"Inget hittat för '{query}' i brain."
         else:
             return f"❌ Okänt tool: {tool_name}"
 
     def get_tools(self) -> List[Dict]:
         """Definiera tillgängliga tools för Claude"""
         tools = [
+            {
+                "name": "fetch_brain_entity",
+                "description": (
+                    "Hämta full markdown-sida från Axona second-brain (axona-brain vault) "
+                    "om en kund, person, koncept eller analys. Använd när du behöver djupare "
+                    "kontext än det som ligger i system-prompten (t.ex. en specifik kund-historik, "
+                    "en analys eller ett tidigare beslut)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Slug, namn eller frasen som beskriver entiteten (t.ex. 'Roddar VVS' eller 'cron-library')."
+                        }
+                    },
+                    "required": ["query"]
+                }
+            },
             {
                 "name": "read_file",
                 "description": "Läs innehållet i en fil. Ange relativ eller absolut sökväg.",
@@ -794,6 +820,19 @@ class ClaudeHandler:
 
             # Lägg till användarmeddelande i memory
             context_warning = self.memory.add_message('user', f"[{user_name}]: {user_message}")
+
+        # Lägg till axona-brain långtidsminne (CLAUDE.md + hot-cache + index) om vault tillgängligt
+        try:
+            brain_ctx = read_brain_context()
+            if brain_ctx:
+                long_term_context = (
+                    "## AXONA BRAIN (long-term memory)\n\n"
+                    + brain_ctx
+                    + "\n\n---\n\n"
+                    + long_term_context
+                )
+        except Exception as e:
+            logger.warning(f"brain context unavailable: {e}")
 
         # Lägg till användarmeddelande i historik (fallback eller komplettering)
         self.conversation_history.append({
