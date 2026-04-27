@@ -18,6 +18,29 @@ Discord-bot med Claude AI, persistent databas och avancerade features för före
 - 🤖 **AI-assistans** - Veckorapporter och prioriteringshjälp
 - 👥 **Multi-user** - Separata sessions per användare
 
+### Brain integration (v2.1)
+- 🧠 **Axona-brain som långtidsminne** - markdown-vault på GitHub
+- 🔍 **`fetch_brain_entity` tool** - Claude kan hämta full kontext om kunder/koncept on-demand
+- ✍️  **Session → brain** - `!flush` eller 30-min timeout skriver session-summary till `sources/`
+
+## 🧠 Memory-modell
+
+| Typ | Var | Livslängd | Syfte |
+|---|---|---|---|
+| Korttid | Supabase `conversation_messages` | ~30 senaste meddelanden, 30-min timeout | Kontinuitet inom en session |
+| Långtid (read) | `axona-brain` (CLAUDE.md + hot-cache.md + index.md) | Hela vault | Vem är Axona, kunder, koncept, tidigare beslut |
+| Långtid (write) | `axona-brain/sources/discord-YYYY-MM-DD-<slug>.md` | Permanent (versionerat i git) | Bevara session-output för framtida frågor |
+
+**Skriv-flöde**:
+1. `!flush` (manuellt) ELLER auto-flush var 5:e min för sessioner som varit inaktiva > 30 min.
+2. Claude (Sonnet 4.6) genererar 200–300 ord summering med korrekt vault-frontmatter.
+3. `git pull --rebase`, write till `sources/`, commit som `gideon-bot` med prefix `ingest: gideon - <topic>`, push till `main`.
+4. axona-brain GH Actions ingest-workflow filtrerar bort commits med `ingest:`/`cron:` prefix → ingen oändlig loop.
+
+**Env**:
+- `BRAIN_PATH` (default `/workspace/axona-brain`) — pekar på lokal git-klon av axona-brain.
+- `ANTHROPIC_API_KEY` — används också för summary-generering.
+
 ## 📋 Kommandon
 
 ### Grundläggande
@@ -25,7 +48,8 @@ Discord-bot med Claude AI, persistent databas och avancerade features för före
 !ask <fråga>           - Fråga Claude något
 !read <filepath>       - Läs en fil
 !list [directory]      - Lista filer
-!reset                 - Nollställ konversation
+!reset                 - Nollställ konversation (lokalt, sparar inte till brain)
+!flush                 - Skriv session-summary till axona-brain och nollställ
 !info                  - Visa hjälp
 ```
 
