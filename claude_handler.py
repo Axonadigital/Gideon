@@ -12,12 +12,13 @@ from conversation_memory import ConversationMemory
 class ClaudeHandler:
     """Hanterar Claude API-anrop med file access tools"""
 
-    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-5-20250929", db=None, calendar=None, user_id: Optional[str] = None):
+    def __init__(self, api_key: str, workspace_path: str, model: str = "claude-sonnet-4-5-20250929", db=None, calendar=None, brain=None, user_id: Optional[str] = None):
         self.client = anthropic.Anthropic(api_key=api_key)
         self.workspace_path = Path(workspace_path).resolve()
         self.model = model
         self.db = db  # Supabase handler för att spara leads, KPIs, etc.
         self.calendar = calendar  # Calendar handler för Google Calendar
+        self.brain = brain  # Brain handler för axona-brain vault
 
         # Conversation memory system (korttidsminne + långtidsminne)
         if db and user_id:
@@ -415,6 +416,38 @@ class ClaudeHandler:
             return self.calendar.delete_event(
                 event_id=tool_input.get("event_id")
             )
+        # ==================== BRAIN TOOLS ====================
+        elif tool_name == "read_brain_file":
+            if not self.brain:
+                return "❌ Brain inte konfigurerat!"
+            return self.brain.read_brain_file(tool_input["filepath"])
+        elif tool_name == "list_brain":
+            if not self.brain:
+                return "❌ Brain inte konfigurerat!"
+            return self.brain.list_brain(tool_input.get("directory", "."))
+        elif tool_name == "search_brain":
+            if not self.brain:
+                return "❌ Brain inte konfigurerat!"
+            return self.brain.search_brain(
+                tool_input["pattern"], tool_input.get("directory", ".")
+            )
+        elif tool_name == "find_client":
+            if not self.brain:
+                return "❌ Brain inte konfigurerat!"
+            result = self.brain.find_client(tool_input["query"])
+            if result:
+                content = self.brain.read_brain_file(result)
+                return f"✅ Hittade {result}:\n\n{content}"
+            return f"❌ Hittade ingen klient som matchar '{tool_input['query']}'"
+        elif tool_name == "save_to_brain":
+            if not self.brain:
+                return "❌ Brain inte konfigurerat!"
+            return self.brain.save_to_sources(
+                slug=tool_input["slug"],
+                title=tool_input["title"],
+                body=tool_input["body"],
+                tags=tool_input.get("tags"),
+            )
         else:
             return f"❌ Okänt tool: {tool_name}"
 
@@ -752,6 +785,126 @@ class ClaudeHandler:
                 }
             ])
 
+        # ==================== BRAIN TOOLS ====================
+        # Axona second-brain vault — read entities/clients, concepts, analyses,
+        # and write Discord conversations to sources/ for ingest pipeline.
+        if self.brain:
+            tools.extend([
+                {
+                    "name": "find_client",
+                    "description": (
+                        "Slå upp en klient i brain via fuzzy namn-match. Returnerar "
+                        "hela klientsidan om hittad. Använd när användaren nämner ett "
+                        "företagsnamn (t.ex. 'EMP Bygg', 'Norrlandsbetong') — slå alltid "
+                        "upp först innan du svarar, så att du har riktig kontext (status, "
+                        "lead score, last touch, deals)."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Företagsnamn eller del av namn",
+                            }
+                        },
+                        "required": ["query"],
+                    },
+                },
+                {
+                    "name": "read_brain_file",
+                    "description": (
+                        "Läs en specifik fil i brain-vaulten. Användbar för att läsa "
+                        "concepts/, analyses/, eller specifika entities. Sökväg är "
+                        "relativ till brain-roten (t.ex. 'concepts/cron-library.md' eller "
+                        "'analyses/2026-04-25-vault-architecture-decision.md')."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "filepath": {
+                                "type": "string",
+                                "description": "Relativ sökväg från brain-roten",
+                            }
+                        },
+                        "required": ["filepath"],
+                    },
+                },
+                {
+                    "name": "list_brain",
+                    "description": (
+                        "Lista filer i en mapp i brain. Använd för att utforska vad "
+                        "som finns (t.ex. 'entities/clients' för alla klienter, "
+                        "'analyses/meetings' för alla möten)."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "directory": {
+                                "type": "string",
+                                "description": "Sökväg från brain-roten (default: '.')",
+                            }
+                        },
+                    },
+                },
+                {
+                    "name": "search_brain",
+                    "description": (
+                        "Sök efter text i brain (grep). Returnerar lista med filer som "
+                        "innehåller mönstret. Använd för bredare frågor som 'vilka klienter "
+                        "har vi nämnt EMP Bygg?' eller 'sök efter offert'."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "pattern": {
+                                "type": "string",
+                                "description": "Sökmönster (regex)",
+                            },
+                            "directory": {
+                                "type": "string",
+                                "description": "Sökmapp (default: '.')",
+                            },
+                        },
+                        "required": ["pattern"],
+                    },
+                },
+                {
+                    "name": "save_to_brain",
+                    "description": (
+                        "Spara en Discord-konversation till brain som ny source. "
+                        "Använd när användaren säger 'spara detta till brain', 'detta "
+                        "är viktigt', 'kom ihåg detta'. Filen hamnar i sources/ och "
+                        "GitHub Actions ingest-pipeline triggar automatiskt — entities/"
+                        "clients, concepts, och analyses uppdateras inom någon minut. "
+                        "VIKTIGT: bekräfta alltid med användaren INNAN du sparar — föreslå "
+                        "slug och titel, vänta på OK."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "slug": {
+                                "type": "string",
+                                "description": "Kort slug-titel, t.ex. 'norrlandsbetong-demo'",
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Mänsklig titel, t.ex. 'Norrlandsbetong vill ha demo nästa vecka'",
+                            },
+                            "body": {
+                                "type": "string",
+                                "description": "Innehållet att spara — sammanfatta konversationen klart och kortfattat",
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Tags utöver default 'discord, ingest' (t.ex. ['lead', 'demo'])",
+                            },
+                        },
+                        "required": ["slug", "title", "body"],
+                    },
+                },
+            ])
+
         return tools
 
     def _finalize_response(self, response_text: str, context_warning: Optional[str] = None) -> str:
@@ -847,6 +1000,37 @@ Om CRM-data finns injicerad i meddelandet, använd ENBART den datan. Hämta ALDR
 
 Var proaktiv och naturlig - du förstår från kontexten!""" if self.db else ""
 
+        brain_tools_info = """
+**AXONA-BRAIN — DEN CENTRALA KUNSKAPSKÄLLAN:**
+Du har tillgång till axona-brain-vaulten via verktygen find_client, read_brain_file,
+list_brain, search_brain och save_to_brain. Vaulten är vår enda källa till sanning
+om kunder, koncept, beslut och historik. När du svarar på något som rör företagets
+verklighet — slå alltid först i brain.
+
+**LÄSORDNING (följ alltid):**
+1. Vid företagsnamn → find_client('namn')
+2. Vid bredare fråga → search_brain('mönster')
+3. Vid specifik fil → read_brain_file('path/to/file.md')
+4. Vid utforskning → list_brain('entities/clients')
+
+**SPARA TILL BRAIN:**
+När en Discord-konversation innehåller ny information som brain borde veta —
+föreslå att spara med save_to_brain. VIKTIGT: bekräfta ALLTID med användaren
+innan du sparar. Föreslå:
+- slug: kort identifierare (t.ex. 'norrlandsbetong-demo')
+- title: en mening som beskriver innehållet
+- body: din sammanfattning av konversationen
+
+Exempel på när spara är värdefullt:
+- Möte resulterade i ny insikt om en kund
+- Beslut fattades om strategi/process
+- Nytt företag nämndes med affärspotential
+- Användare säger 'spara detta', 'kom ihåg', 'skriv ner'
+
+GitHub Actions ingest-pipelinen kör automatiskt när du sparar — entities,
+concepts och analyses uppdateras inom någon minut.
+""" if self.brain else ""
+
         calendar_tools_info = """
 **KALENDER-VERKTYG:**
 - add_calendar_event: Lägg till möten, deadlines, påminnelser i Google Calendar
@@ -922,6 +1106,11 @@ User: "Visa allt från senaste veckan fram till nästa vecka"
 **VIKTIGT — Kalenderdata:**
 Anropa ALLTID get_calendar_events innan du svarar på frågor om möten, schema eller kalender.
 Svara aldrig från minnet om vad som finns i kalendern.
+
+**KORS-REFERERA MOT BRAIN:**
+Innan du bokar möte med en kund — slå upp dem i brain (find_client) för att se status,
+lead score, sista kontakt, befintliga deals. Lägg in den kontexten i mötesbeskrivningen
+så att förberedelsen är synlig direkt i kalenderhändelsen.
 
 Standardanrop per frågetype:
 - "idag" → get_calendar_events(days_ahead=0, max_results=25)
@@ -1009,6 +1198,7 @@ Workspace: {self.workspace_path}
 Du har tillgång till verktyg för att läsa, skriva och söka i filer. Använd dem när det behövs!
 {db_tools_info}
 {calendar_tools_info}
+{brain_tools_info}
 
 Kommunicera på svenska."""
 

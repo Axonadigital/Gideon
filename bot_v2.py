@@ -8,6 +8,7 @@ from supabase_handler import SupabaseHandler
 from calendar_handler import CalendarHandler
 from tts_handler import TTSHandler
 from crm_handler import CRMHandler, CRMError
+from brain_handler import BrainHandler
 from http_api import GideonHTTPAPI
 from datetime import date, datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -35,6 +36,9 @@ CRM_EDGE_FUNCTION_URL = os.getenv("CRM_EDGE_FUNCTION_URL")
 CRM_BOT_SECRET = os.getenv("CRM_BOT_SECRET")
 CRM_ALERTS_CHANNEL_ID = os.getenv("CRM_ALERTS_CHANNEL_ID")   # Dagliga påminnelser
 CRM_REPORTS_CHANNEL_ID = os.getenv("CRM_REPORTS_CHANNEL_ID") # Veckoapporter + AI-analys
+
+# Brain-integration (axona-brain vault)
+BRAIN_PATH = os.getenv("BRAIN_PATH")  # t.ex. /workspace/axona-brain
 
 # Skapa bot med intents
 intents = discord.Intents.default()
@@ -68,6 +72,15 @@ crm = None
 if CRM_EDGE_FUNCTION_URL and CRM_BOT_SECRET:
     crm = CRMHandler(url=CRM_EDGE_FUNCTION_URL, secret=CRM_BOT_SECRET)
 
+# Brain handler — läser/skriver axona-brain vault
+brain = None
+if BRAIN_PATH:
+    try:
+        brain = BrainHandler(BRAIN_PATH, auto_pull=True)
+    except Exception as e:
+        print(f"⚠️ Brain handler kunde inte initieras: {e}")
+        brain = None
+
 # Meeting Reminder handler
 meeting_reminder = None
 MEETING_ALERTS_CHANNEL_ID = os.getenv("MEETING_ALERTS_CHANNEL_ID")  # Discord-kanal för påminnelser
@@ -83,6 +96,7 @@ def get_claude_session(user_id: str) -> ClaudeHandler:
             model=CLAUDE_MODEL,
             db=db,  # Skicka in Supabase så Claude kan använda den
             calendar=calendar,  # Skicka in Calendar så Claude kan använda den
+            brain=brain,  # Skicka in axona-brain så Claude kan läsa/skriva vaulten
             user_id=user_id  # Skicka in user_id för minnesystemet
         )
     return claude_sessions[user_id]
@@ -97,6 +111,7 @@ async def on_ready():
     print(f"📅 Google Calendar: {'✅ Connected' if calendar else '❌ Not configured'}")
     print(f"🎤 TTS (Voice): {'✅ Connected' if tts else '❌ Not configured'}")
     print(f"🏢 CRM: {'✅ Connected' if crm else '❌ Not configured (CRM_EDGE_FUNCTION_URL/CRM_BOT_SECRET saknas)'}")
+    print(f"🧠 Brain: {'✅ Connected at ' + str(brain.path) if brain else '❌ Not configured (BRAIN_PATH saknas)'}")
 
     # Starta CRM-scheduler om CRM är konfigurerat
     if crm:
